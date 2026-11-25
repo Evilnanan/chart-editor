@@ -180,14 +180,17 @@ function assignIndexes(documents,project,maximum,includeManifestOnly=false) {
 }
 function euterpeManifest(project,indexes,files,source) {
   const meta={...source?.meta};
-  const values=Array.from(indexes.values()).flatMap(chart=>[chart.bpm,...chart.tempos.map(tempo=>tempo.bpm)]);
   const bpm=Math.round(project.bpm);
-  const bpmMin=Math.round(Math.min(...values,bpm)),bpmMax=Math.round(Math.max(...values,bpm));
+  const standalone=project.manifestOnly && source && Object.keys(files).length===0;
   meta.name=project.name;
   meta.author=project.artist;
   meta.bpm=bpm;
-  meta.bpm_min=bpmMin===bpmMax?null:bpmMin;
-  meta.bpm_max=bpmMin===bpmMax?null:bpmMax;
+  if(!standalone) {
+    const values=Array.from(indexes.values()).flatMap(chart=>[chart.bpm,...chart.tempos.map(tempo=>tempo.bpm)]);
+    const bpmMin=Math.round(Math.min(...values,bpm)),bpmMax=Math.round(Math.max(...values,bpm));
+    meta.bpm_min=bpmMin===bpmMax?null:bpmMin;
+    meta.bpm_max=bpmMin===bpmMax?null:bpmMax;
+  }
   meta.scene=sceneToBms(project.scene);
   meta.safe_for_streamer=meta.safe_for_streamer ?? false;
   meta.maps=Object.fromEntries([...indexes].map(([index,chart])=>['map'+index,{
@@ -195,7 +198,7 @@ function euterpeManifest(project,indexes,files,source) {
     charters:chart.designer===chart.packageMap?.charters?.join(', ') ? chart.packageMap.charters : chart.designer?[chart.designer]:[],
   }]));
   const result={schema:1,cid:null,meta,files:{}};
-  if(project.manifestOnly && source && Object.keys(files).length===0) {
+  if(standalone) {
     result.cid=source.cid ?? null;
     result.files=source.files;
   } else for(const [name,data] of Object.entries(files)) {

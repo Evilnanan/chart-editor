@@ -139,17 +139,21 @@ test('MDM and Euterpe handle two difficulties with shared audio and per-map rati
 test('Euterpe standalone manifest and current package schema preserve extra files',async()=>{
   const bms=strToU8(bmsReference);
   const talk=strToU8('dialogue');
-  const native={schema:1,cid:42,meta:{name:'Euterpe reference',author:'Composer',bpm:120,scene:'scene_08',safe_for_streamer:true,
+  const native={schema:1,cid:42,meta:{name:'Euterpe reference',author:'Composer',bpm:120,bpm_min:100,bpm_max:180,scene:'scene_08',safe_for_streamer:true,
     maps:{map2:{rating:'6',charters:['One']},map3:{rating:'10.5',charters:['One','Two'],predicted_rating:9.9}}},files:{
     'map3.bms':{version:2,size:bms.length},'map3.talk':{version:1,size:talk.length},'cover.webp':{version:1,size:cover.blob.size},
   }};
   const manifest=encode(native);
   const metadata=(await openFiles([new File([manifest],'manifest.epk')]));
   assert.equal(metadata.documents[0].manifestOnly,true);
+  metadata.documents[0].name='Edited title';
   const raw=await exportFile('epk-only',metadata.documents[0],metadata.documents,metadata.assets);
   const preserved=decode(await toBytes(raw.blob));
   assert.deepEqual(preserved.files,native.files);
   assert.equal(preserved.cid,42);
+  assert.equal(preserved.meta.name,'Edited title');
+  assert.equal(preserved.meta.bpm_min,100);
+  assert.equal(preserved.meta.bpm_max,180);
   assert.equal(preserved.meta.maps.map2.rating,'6');
   const zip=zipSync({'manifest.epk':manifest,'map3.bms':bms,'map3.talk':talk,'cover.webp':await toBytes(cover.blob),'music.ogg':await toBytes(music.blob)});
   const loaded=await openFiles([new File([zip],'reference.zip')]);
