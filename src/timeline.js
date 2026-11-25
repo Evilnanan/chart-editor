@@ -62,6 +62,7 @@ export class Timeline {
 
   layout() {
     const mobile=matchMedia('(max-width:680px)').matches;
+    const compact=!mobile && matchMedia('(max-height:930px)').matches;
     const width=this.host.clientWidth;
     if (!width) return;
     this.width=width;
@@ -72,8 +73,8 @@ export class Timeline {
     const wave=this.api.state.waveform;
     const spec=[
       {id:'ruler',name:'',height:mobile?28:33},
-      ...(wave ? [{id:'wave',name:translate('波形','Waveform','波形'),icon:'activity',height:mobile?49:65,color:'#9994bb'}] : []),
-      ...visible.map(track=>({...track,name:translate(track.name,track.en,track.ja),height:mobile ? (['air','road'].includes(track.id)?66:34) : (['air','road'].includes(track.id)?86:42)})),
+      ...(wave ? [{id:'wave',name:translate('波形','Waveform','波形'),icon:'activity',height:mobile?49:compact?55:65,color:'#9994bb'}] : []),
+      ...visible.map(track=>({...track,name:translate(track.name,track.en,track.ja),height:mobile ? (['air','road'].includes(track.id)?66:34) : (['air','road'].includes(track.id)?(compact?77:86):(compact?37:42))})),
       ...axes.map(axis=>({id:'axis:'+axis.id,axis,name:noteTypeNames(axis.type,this.api.state.lang),color:'#86ced3',height:46,icon:'curve'})),
     ];
     let y=0;
@@ -183,7 +184,7 @@ export class Timeline {
     const notes=this.api.visibleNotes().sort((a,b)=>(a.layer===state.layer)-(b.layer===state.layer));
     for (const note of notes) {
       if (note.end<this.start-.2 || note.time>end+.2) continue;
-      const matchingAxis=rows.find(row=>row.axis?.id===note.axisId);
+      const matchingAxis=note.axisId ? rows.find(row=>row.axis?.id===note.axisId) : null;
       const row=matchingAxis || rows.find(row=>row.id===note.track);
       if (!row) continue;
       this.drawNote(note,row);
@@ -192,7 +193,7 @@ export class Timeline {
         if(air) this.drawNote(note,air);
       }
     }
-    for (const tempo of project.tempos) {
+    for (const tempo of state.filterEnabled && (state.hiddenGroups.has('tempo') || state.hiddenTypes.has('preset_beatbpm')) ? [] : project.tempos) {
       const row=rows.find(row=>row.id==='tempo');
       if(!row || tempo.time<this.start-.15 || tempo.time>end+.15) continue;
       const item={...tempo,type:'preset_beatbpm',track:'tempo',end:tempo.time};
@@ -269,7 +270,7 @@ export class Timeline {
     const selected=state.selected.has(note.id);
     const x=this.x(note.time),y=row.y+row.height*.5;
     const end=this.x(note.end);
-    const isLong=isHold(note.type) && end-x>7;
+    const isLong=isHold(note.type) && note.type!=='long_short' && end-x>7;
     const color=row.color || '#b9b6cf';
     const layerAlpha=note.layer===undefined || note.layer===state.layer || note.layer===-1 ? 1 : state.layerOpacity;
     const alpha=layerAlpha*(state.mode==='draw' && state.category!==groupOf(note.type)?state.otherOpacity:1);
@@ -403,7 +404,7 @@ export class Timeline {
       } else if(state.mode==='select') d.kind='selection';
       else if(state.mode==='erase') d.kind='erase';
       else if(isCurve({type:state.noteType}) && !p.row.axis && ['air','road'].includes(p.row.id)) d.kind='curve';
-      else if((isHold(state.noteType) || state.slideFill) && ['air','road'].includes(p.row.id)) d.kind='hold';
+      else if((isHold(state.noteType) && state.noteType!=='long_short' || state.slideFill) && ['air','road'].includes(p.row.id)) d.kind='hold';
       else d.kind='create';
     }
     this.drag=d;

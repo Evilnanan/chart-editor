@@ -8,7 +8,7 @@ const fileLimit=512*1024*1024;
 const chartLimit=64*1024*1024;
 const audioExt=/\.(?:ogg|mp3|flac|wav|m4a|aac|opus|aiff|mp4)$/i;
 const imageExt=/\.(?:png|gif|jpe?g|webp|avif|bmp)$/i;
-const packageExt=/\.(?:zip|mdm|mdp)$/i;
+const packageExt=/\.(?:zip|mdm)$/i;
 const bmsExt=/\.(?:bms|bme|bml)$/i;
 const mimeTypes={
   ogg:'audio/ogg',mp3:'audio/mpeg',wav:'audio/wav',flac:'audio/flac',m4a:'audio/mp4',opus:'audio/ogg',
@@ -105,7 +105,8 @@ export async function openFiles(files) {
   }
   const pairs=[...entries];
   const find=name=>pairs.find(([key])=>basename(key).toLowerCase()===name.toLowerCase());
-  const backupEntry=pairs.find(([path])=>/\.json$/i.test(path)&&basename(path).toLowerCase()!=='info.json'&&basename(path).toLowerCase()!=='cinema.json'&& !path.includes('/'));
+  const backupEntry=pairs.find(([path])=>/\.chart\.json$/i.test(path))
+    || (pairs.length===1 && /\.json$/i.test(pairs[0][0]) ? pairs[0] : null);
   if(backupEntry) {
     const data=decodeJson(await bytesOf(backupEntry[1]));
     if(data.app==='muse-chart-studio') return unpackBackup(data);
@@ -114,6 +115,7 @@ export async function openFiles(files) {
   const epk=find('manifest.epk')||pairs.find(([path])=>/\.epk$/i.test(path));
   const bms=pairs.filter(([path])=>bmsExt.test(path)).sort(([a],[b])=>a.localeCompare(b,undefined,{numeric:true}));
   const info=find('info.json');
+  if(epk && epk[1].size>chartLimit) throw new Error('Euterpe 清单超过 64 MB');
   const manifest=epk?cleanManifest(decode(await bytesOf(epk[1]),{maxStrLength:2_000_000,maxMapLength:10000,maxArrayLength:10000})):null;
   const mdmInfo=info?decodeJson(await bytesOf(info[1])):null;
   const validMaps=manifest?.meta?.maps || {};
@@ -164,12 +166,12 @@ export async function openFiles(files) {
   return {documents:docs,assets:{audio:audio?blobEntry(...audio):null,cover:cover?blobEntry(...cover):null,extras,manifest,mdmInfo}};
 }
 
-function assignIndexes(documents,project,maximum) {
-  const charts=documents.filter(chart=>chart.id===project.id||!chart.manifestOnly);
+function assignIndexes(documents,project,maximum,includeManifestOnly=false) {
+  const charts=documents.filter(chart=>includeManifestOnly || chart.id===project.id||!chart.manifestOnly);
   const ordered=[project,...charts.filter(chart=>chart.id!==project.id)];
   const assigned=new Map();
   for(const chart of ordered) {
-    let index=chart.packageIndex || difficultyIndex(chart.difficulty);
+    let index=chart.packageIndex && chart.difficulty===indexDifficulty(chart.packageIndex) ? chart.packageIndex : difficultyIndex(chart.difficulty);
     if(index>maximum) index=maximum;
     if(assigned.has(index)) index=Array.from({length:maximum},(_,i)=>i+1).find(i=>!assigned.has(i));
     if(index) assigned.set(index,chart);
@@ -248,7 +250,7 @@ export async function exportFile(format,project,documents,assets) {
     if(assets.audio) files[audioName]=await bytesOf(assets.audio.blob);
     if(assets.cover) files['cover.png']=await bytesOf(assets.cover.blob);
   } else if(['mdm','epk','epk-only'].includes(format)) {
-    const indexes=assignIndexes(documents,project,format==='mdm'?5:4);
+    const indexes=assignIndexes(documents,project,format==='mdm'?5:4,format==='epk-only' && project.manifestOnly);
     if(format!=='epk-only' || !project.manifestOnly) {
       for(const [index,chart] of indexes) files['map'+index+'.bms']=strToU8(serializeBms(chart,'music.ogg'));
       if(assets.audio) files['music.ogg']=await bytesOf(assets.audio.blob);

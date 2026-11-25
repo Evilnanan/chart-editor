@@ -24,7 +24,7 @@ const s={
   ...defaults,...persisted, mode:'select',noteType:'small_1',category:'normal',layer:0,board:false,mobile:'editor',saved:true,
   hiddenTracks:new Set(persisted.hiddenTracks),hiddenTypes:new Set(persisted.hiddenTypes),hiddenGroups:new Set(persisted.hiddenGroups),
   selectionTypes:new Set(persisted.selectionTypes),selected:new Set(),selectedNode:null,curveDraft:null,curveType:'Linear',
-  loopEnabled:false,loopStart:0,loopEnd:15,clipboard:[],pasteAt:false,placementDirection:'normal',placementSpeed:2,
+  loopEnabled:false,loopStart:0,loopEnd:15,clipboard:[],placementDirection:'normal',placementSpeed:2,
 };
 const t=(zh,en=zh,ja=en)=>s.lang==='zh_cn'?zh:s.lang==='ja_jp'?ja:en;
 const nLabel=type=>noteTypeNames(type,s.lang);
@@ -296,12 +296,13 @@ function insert(row,time,end=null) {
   const note=makeNote(type,end!==null?Math.min(time,end):time,lane,link?.layer??(isAxis(type)?layerForAxis:s.layer),{
     direction:directions(type).includes(s.placementDirection)?s.placementDirection:directions(type)[0],speed:s.placementSpeed,
   });
-  if(end!==null && end!==time) note.end=Math.max(time,end);
+  if(end!==null && end!==time && type!=='long_short') note.end=Math.max(time,end);
   if(isHold(type)) note.end=Math.min(p.duration,note.end);
   if(link) note.axisId=link.id;
   if(s.slideFill && playable(note)&&!isHold(type) && end!==null && end!==time) {
     const points=gridPoints(p,Math.min(time,end),Math.max(time,end),s.division).slice(0,1000);
-    const notes=points.map(point=>makeNote(type,point.time,lane,s.layer,note)).map((item,index)=>({...item,id:uid(),time:points[index].time,end:points[index].time}));
+    const notes=points.filter(point=>!p.notes.some(other=>other.layer===s.layer && other.track===note.track && other.time===point.time))
+      .map(({time})=>({...note,id:uid(),time,end:time}));
     s.selected=new Set(notes.map(item=>item.id));change(chart=>chart.notes.push(...notes));return;
   }
   s.selected=new Set([note.id]);
@@ -442,6 +443,21 @@ function paste() {
   });
 }
 function editInspector(name,value) {
+  if(name==='baseColor' && value && !/^#[a-f0-9]{6}(?:[a-f0-9]{2})?$/i.test(value)) {
+    updateInspector();
+    return showToast(t('请输入 #RRGGBB 或 #RRGGBBAA','Use #RRGGBB or #RRGGBBAA','色は #RRGGBB または #RRGGBBAA で入力してください'),true);
+  }
+  if(['hsv','gradientStart','gradient'].includes(name) && value) {
+    const values=value.split('^').map(token=>Number(token.trim()));
+    const gradient=name!=='hsv';
+    if(values.length!==(gradient?4:3) || values.some(number=>!Number.isFinite(number)) || gradient && (values[3]<0 || values[3]>1)) {
+      updateInspector();
+      const message=gradient
+        ? t('请输入以 ^ 分隔的四个参数，不透明度范围为 0 到 1。','Enter four values separated by ^. Alpha must be between 0 and 1.','^ で区切った四つの値を入力してください。不透明度は 0 から 1 です。')
+        : t('请输入以 ^ 分隔的色相、饱和度和明度。','Separate hue, saturation and value with ^.','色相・彩度・明度を ^ で区切ってください。');
+      return showToast(message,true);
+    }
+  }
   const selected=selectedItems();
   if(!selected.length) return;
   change(chart=>{
@@ -458,6 +474,7 @@ function editInspector(name,value) {
       if(name==='type') {
         editNoteType(note,value);
         if (isAxis(value)) {
+          note.layer=isGlobalAxis(value)?-1:note.layer===-1?s.layer:note.layer;
           let axis=chart.axes.find(axis=>axis.type===value&&axis.layer===note.layer);
           if(!axis) {axis={id:uid(),type:value,layer:note.layer};chart.axes.push(axis);}
           note.axisId=axis.id;
@@ -468,7 +485,7 @@ function editInspector(name,value) {
         if(isCurve(note)&&value>note.nodes.at(-2).time) note.nodes.at(-1).time=value;
         if(!isCurve(note)||value>note.nodes.at(-2).time) note.end=value;
       } else if(name==='track') note.track=trackFor(note.type,value);
-      else if(name==='layer') {
+      else if(name==='layer' && !isGlobalAxis(note.type)) {
         note.layer=value;
         if(note.axisId) {
           let axis=chart.axes.find(axis=>axis.type===note.type&&axis.layer===value);
@@ -479,7 +496,7 @@ function editInspector(name,value) {
       else if(name==='speed') note.speed=value;
       else if(name==='heart') {if(heartTypes.includes(note.type)) note.heart=value;}
       else if(name==='value' && ['vfx_visibility','vfx_bossvisibility'].includes(note.type)) note.value=value==='true';
-      else if(['value','easing','baseColor','hsv','gradient','stayTexture'].includes(name)) note[name]=value;
+      else if(['value','easing','baseColor','hsv','gradientStart','gradient','stayTexture'].includes(name)) note[name]=value;
     }
   });
   updateInspector();
@@ -599,15 +616,15 @@ function metadataDialog(create=false) {
     if(values.previewEnd && (values.previewEnd<values.previewStart || values.previewEnd>values.duration)) throw new Error(t('预览范围无效','Invalid preview range','試聴範囲が無効です'));
     if(create) {
       if(!s.saved && !s.autosave && !confirm(t('放弃未保存的修改并新建？','Discard unsaved changes and create a chart?','未保存の変更を破棄しますか？'))) return;
-      const chart=makeProject(values);
+      const chart=makeProject({...values,bmsDurationExplicit:true});
       const nextAssets={extras:{}};
       if(audio?.size) {
         const buffer=await transport.decode(audio);
         nextAssets.audio={name:audio.name,blob:audio};
-        chart.duration=round(Math.max(chart.duration,buffer.duration));
+        chart.duration=round(chart.duration===60 ? buffer.duration : Math.max(chart.duration,buffer.duration));
       }
       await switchPackage([chart],nextAssets);
-    } else change(chart=>Object.assign(chart,values,{demo:chart.demo && chart.name===values.name}));
+    } else change(chart=>Object.assign(chart,values,{demo:chart.demo,bmsDurationExplicit:true}));
     dlg.close();
   });
 }
@@ -631,6 +648,7 @@ function gridDialog() {
       for(const key of ['grid','strict']) s[key]=data.has(key);
       const values=Object.fromEntries(['bpm','numerator','denominator','offset'].map(key=>[key,num(data.get(key),p[key])]));
       change(chart=>Object.assign(chart,values,{mdcpDivision:s.division,mdcpGrid:s.grid}));
+      if(transport.time()>p.duration) seek(p.duration,true);
       storePreferences();render();dlg.close();
     });
 }
@@ -677,6 +695,10 @@ async function loadAudio() {
   try {
     const buffer=assets.audio ? await transport.decode(assets.audio.blob) : p.demo ? makeDemoAudio(transport.context(),p.duration,p.bpm) : null;
     if(generation!==audioGeneration) return;
+    if(buffer && p.bmsSourceName && !p.bmsDurationExplicit) {
+      p.duration=Math.max(p.duration,round(buffer.duration));
+      render();
+    }
     transport.setBuffer(buffer,p.duration);
     timeline.draw();
   } catch {

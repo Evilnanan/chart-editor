@@ -20,6 +20,7 @@ export class Playtest {
     this.demoEnd=chartPreview && this.project().previewEnd>start ? this.project().previewEnd : null;
     transport.pause();
     this.scoring=this.project().notes.filter(playable).sort((a,b)=>a.time-b.time);
+    this.bossActions=this.project().notes.filter(note=>['boss_ra','boss_ra_out'].includes(note.type)).sort((a,b)=>a.time-b.time);
     this.effects=this.project().notes.filter(note=>note.track==='effect').sort((a,b)=>a.time-b.time);
     this.resetRun(start);
     dialog.innerHTML=`
@@ -135,8 +136,8 @@ export class Playtest {
     const scene=this.valueAt('vfx_changescene',time,this.project().scene);
     const color=scenes.find(row=>row[0]===scene)?.[2] || '#777bff';
     const brightness=clamp(this.valueAt('vfx_bgluminance',time,1),0,2);
-    const saturation=clamp(this.valueAt('vfx_grayscale',time,1),0,2);
-    const hidden=this.valueAt('bms_hidebg',time,-1)>this.valueAt('bms_showbg',time,-1);
+    const saturation=clamp(1-this.valueAt('vfx_grayscale',time,0)/100,0,2);
+    const hidden=this.effects.findLast(note=>note.time<=time && ['bms_hidebg','bms_showbg'].includes(note.type))?.type==='bms_hidebg';
     const gradient=ctx.createLinearGradient(0,0,w,h);
     gradient.addColorStop(0,'#12121f');gradient.addColorStop(1,color+'50');ctx.fillStyle=gradient;ctx.fillRect(0,0,w,h);
     const sceneSpeed=this.valueAt('effect_scene_timing',time,1);
@@ -164,7 +165,7 @@ export class Playtest {
         ctx.fillStyle=c+'9d';ctx.beginPath();ctx.arc(xHit,y,15,0,2*Math.PI);ctx.fill();
       }
     }
-    const boss=this.project().notes.findLast(note=>note.time<=time&&['boss_ra','boss_ra_out'].includes(note.type));
+    const boss=this.bossActions.findLast(note=>note.time<=time);
     if(boss?.type==='boss_ra'&&this.valueAt('vfx_bossvisibility',time,true)) {
       ctx.strokeStyle=color;ctx.lineWidth=2;ctx.beginPath();ctx.ellipse(w*.91,h*.5,27,38,0,0,Math.PI*2);ctx.stroke();
       ctx.fillStyle=color+'4f';ctx.fill();
@@ -176,7 +177,7 @@ export class Playtest {
       const dx=(w-xHit)*.74*([.72,1,1.35][note.speed-1]||1);
       const x=xHit+(note.time>=time?this.speedDistance(time,note.time,note.layer):note.time-time)*dx;
       if(x>w+24) continue;
-      const c=note.baseColor && /^#[a-f0-9]{6}$/i.test(note.baseColor)?note.baseColor:note.track==='air'?'#ffad82':'#b8a2ff';
+      const c=note.baseColor && /^#[a-f0-9]{6}(?:[a-f0-9]{2})?$/i.test(note.baseColor)?note.baseColor:note.track==='air'?'#ffad82':'#b8a2ff';
       const dt=Math.max(0,note.time-time);
       const sign=note.direction==='up'?1:note.direction==='down'?-1:0;
       const y=lanes[note.track]+sign*Math.max(0,dt-.12)*h*.4;

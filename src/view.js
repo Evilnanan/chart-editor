@@ -1,5 +1,5 @@
 import { icon } from './icons.js';
-import { groups, tracks, noteIcon, noteTypeNames, directions, isHold, isCurve, curves, easings, scenes, playable, isAxis } from './model.js';
+import { groups, tracks, noteIcon, noteTypeNames, directions, isHold, isCurve, curves, easings, scenes, playable, isAxis, isGlobalAxis } from './model.js';
 import { heartTypes } from './definitions.js';
 import { timecode } from './timeline.js';
 
@@ -201,10 +201,10 @@ export function renderInspector(t,s,p,items,audioLabel,coverLabel) {
       ${tempo ? field(t('每小节拍数','Beats per bar','拍子'),input('numerator',item.numerator,'number',idAttr+' min="1" max="64"')) : ''}
       ${tempo ? field(t('拍值','Beat unit','音価'),select('denominator',[1,2,4,8,16,32].map(n=>[n,'1/'+n]),item.denominator,idAttr)) : ''}
       ${!tempo && allPlayable ? field(t('轨道','Track','レーン'),select('track',[['air',t('天空轨','Air','空中')],['road',t('地面轨','Ground','地上')]],item.track,idAttr)) : ''}
-      ${!tempo && p.layers.length>1 ? field(t('层级','Layer','レイヤー'),select('layer',p.layers.map(layer=>[layer.id,layer.name]),item.layer,idAttr),!allPlayable) : ''}
+      ${!tempo && !isGlobalAxis(item.type) && p.layers.length>1 ? field(t('层级','Layer','レイヤー'),select('layer',p.layers.map(layer=>[layer.id,layer.name]),item.layer,idAttr),!allPlayable) : ''}
       ${!tempo && allPlayable ? field(t('入场','Entrance','登場'),select('direction',stageNames(t).filter(([value])=>directions(item.type).includes(value)),item.direction,idAttr)) : ''}
       ${!tempo && allPlayable ? field(t('流速','Scroll speed','流速'),select('speed',stages(t),item.speed,idAttr)) : ''}
-      ${!tempo && isHold(item.type) ? field(t('结束（秒）','End (s)','終点（秒）'),input('end',item.end,'number',textAttr),true) : ''}
+      ${!tempo && isHold(item.type) && item.type!=='long_short' ? field(t('结束（秒）','End (s)','終点（秒）'),input('end',item.end,'number',textAttr),true) : ''}
       ${!tempo && isEffect ? effectField(t,item,idAttr,textAttr) : ''}
       ${allPlayable && heartTypes.includes(item.type) ? checkbox('heart',t('附加红心','Attach heart','ハートを付ける'),item.heart,idAttr) : ''}
     </div>
@@ -245,9 +245,9 @@ function effectField(t,item,idAttr,textAttr) {
   if(item.type==='vfx_changescene') return field(t('场景','Scene','背景'),select('value',scenes.map(([id,label])=>[id,label]),item.value,idAttr),true);
   if(['vfx_visibility','vfx_bossvisibility'].includes(item.type)) return field(t('可见性','Visibility','表示'),select('value',[[true,t('显示','Show','表示')],[false,t('隐藏','Hide','非表示')]],item.value,idAttr),true);
   if(item.type.startsWith('bms_') && item.type!=='bms_spdctrl') return '';
-  return field(t('数值','Value','値'),input('value',item.value,'number',textAttr),true)
-    +(isAxis(item.type)?field(t('关键帧曲线','Keyframe easing','キーフレーム'),select('easing',easings,item.easing,idAttr),true):'')
-    +(item.type==='effect_timing'?field(t('结束（秒，可选）','End (s, optional)','終点（秒、任意）'),input('end',item.end,'number',textAttr),true):'');
+  const range=({vfx_vignette:' min="0" max="1"',vfx_bgluminance:' min="0" max="1"',vfx_bloom:' min="0"',vfx_grayscale:' min="-100" max="100"'})[item.type] || '';
+  return field(t('数值','Value','値'),input('value',item.value,'number',textAttr+range),true)
+    +(isAxis(item.type)&&!item.type.startsWith('effect_')?field(t('关键帧曲线','Keyframe easing','キーフレーム'),select('easing',easings,item.easing,idAttr),true):'');
 }
 
 function curveDetails(t,item,s) {
@@ -268,8 +268,9 @@ function curveDetails(t,item,s) {
 function colorDetails(t,item) {
   return `<details class="inspect-detail"><summary>${t('颜色与渐变','Color & gradient','色・グラデーション')}</summary>
     <div class="inspect-fields">
-      ${field(t('基色','Base color','基本色'),input('baseColor',item.baseColor || '', 'text','data-inspect placeholder="R^G^B^A"'),true)}
-      ${field(t('色相 / 饱和度 / 明度 / 不透明度','Hue / saturation / value / alpha','色相・彩度・明度・不透明度'),input('hsv',item.hsv || '', 'text','data-inspect placeholder="0^0^0^1"'),true)}
+      ${field(t('基色','Base color','基本色'),input('baseColor',item.baseColor || '', 'text','data-inspect placeholder="#FFAA88"'),true)}
+      ${field(t('色相 / 饱和度 / 明度','Hue / saturation / value','色相・彩度・明度'),input('hsv',item.hsv || '', 'text','data-inspect placeholder="0^0^0"'),true)}
+      ${isHold(item.type)?field(t('渐变起点','Gradient start','グラデーション始点'),input('gradientStart',item.gradientStart || '', 'text','data-inspect placeholder="0^0^0^1"'),true):''}
       ${isHold(item.type)?field(t('渐变末端','Gradient end','グラデーション終点'),input('gradient',item.gradient || '', 'text','data-inspect placeholder="0^0^0^1"'),true):''}
       ${isHold(item.type)?checkbox('stayTexture',t('保持长按材质','Keep hold texture','長押しテクスチャを維持'),item.stayTexture,'data-inspect'):''}
     </div>

@@ -43,7 +43,7 @@ const readArgs=raw=>Object.fromEntries((raw || '').split('|').filter(item=>item.
   return [item.slice(0,i),item.slice(i+1)];
 }));
 
-function findType(raw,entrance,end,start) {
+function findType(raw,entrance,end) {
   if(raw==='long_road'||raw==='long_air') {
     if(entrance==='curve'||entrance==='curve_short') return 'curvehold_'+(raw.endsWith('road')?'red':'blue')+(entrance==='curve_short'?'_short':'');
     return entrance==='short'||end<0 ? 'long_short' : 'long';
@@ -81,7 +81,7 @@ function parseNote(args,layer,project) {
   if(!Number.isFinite(time)) throw new Error('MDCPMF 中的音符时间无效');
   if(isAxis(raw)) return axisNote(project,raw,layer,time,entrance,exit);
   const end=num(endRaw,-1);
-  const type=findType(raw,entrance,end,time);
+  const type=findType(raw,entrance,end);
   const lane=raw.endsWith('_air')?'air':'road';
   const effect=raw.startsWith('bms_')&&(raw!=='bms_touhou_ppoint');
   const track=effect?'effect':trackFor(type,lane);
@@ -100,11 +100,17 @@ function parseNote(args,layer,project) {
     if(Math.abs(note.end-note.time)<=.00001) note.end=note.time+.001;
   }
   if(raw==='punch_ra'&&(entrance==='down'||entrance==='air')) {note.track='air';note.direction='down';}
-  if(extraArgs.hsv_offset!==undefined) note.hsv=extraArgs.hsv_offset;
+  if(extraArgs.hsv_offset!==undefined) note.hsv=extraArgs.hsv_offset.replaceAll('~','^');
   if(extraArgs.hsv_grad!==undefined) {
-    const [start,finish]=extraArgs.hsv_grad.split('/');
-    note.gradientStart=start;
-    note.gradient=finish || start;
+    const values=extraArgs.hsv_grad.split('~');
+    if(values.length===8) {
+      note.gradientStart=values.slice(0,4).join('^');
+      note.gradient=values.slice(4).join('^');
+    } else {
+      const [start,end]=extraArgs.hsv_grad.split('/');
+      note.gradientStart=start;
+      note.gradient=end || start;
+    }
   }
   if(extraArgs.base_color!==undefined) note.baseColor=extraArgs.base_color;
   if(extraArgs.hsv_stay_tex!==undefined) note.stayTexture=['true','1'].includes(extraArgs.hsv_stay_tex.toLowerCase());
@@ -128,7 +134,7 @@ export function parseMdcpmf(input) {
   });
   const data=text.match(/editordata\s*\{([\s\S]*?)\}/i)?.[1] || '';
   const layerNames=new Map();
-  for(const [line,kind,raw] of data.matchAll(/^\s*(bpmbeatblock|layercaption)\((.*)\);\s*$/gm)) {
+  for(const [,kind,raw] of data.matchAll(/^\s*(bpmbeatblock|layercaption)\((.*)\);\s*$/gm)) {
     const args=raw.split(',');
     if(kind==='layercaption') layerNames.set(num(args[0]),unescapeText(args.slice(1).join(',')));
     else {
@@ -136,7 +142,7 @@ export function parseMdcpmf(input) {
       if(time>0 && bpm>0 && numerator>0 && denominator>0) project.tempos.push({id:uid(),time,bpm,numerator,denominator});
     }
   }
-  const layers=[...text.matchAll(/maplayer\s*\{([\s\S]*?)\}/gi)];
+  const layers=[...text.matchAll(/^\s*maplayer\s*\{([\s\S]*?)\}/gim)];
   if(!layers.length) throw new Error('MDCPMF 缺少 maplayer');
   if(layers.length>1000) throw new Error('MDCPMF 层级过多');
   for(const [layer,block] of layers.entries()) {
@@ -163,7 +169,8 @@ export function parseMdcpmf(input) {
 
 function noteId(note) {
   const {type,track}=note;
-  if(isCurve(note)||type==='long'||type==='long_short') return 'long_'+track;
+  if(isCurve(note)) return type.endsWith('_short')?type:'long_'+track;
+  if(type==='long'||type==='long_short') return type+'_'+track;
   if(type==='double'||type==='punch') return type+'_ra';
   if(playable(note) && !type.startsWith('boss_ra_atk_') && !type.startsWith('boss_ra_punch')) return type+'_'+track;
   return type;
@@ -176,14 +183,14 @@ function writeNote(note) {
   if(isAxis(type)) return `note(${type},${float(note.time)},${String(note.value)},-1,${note.easing || 'NULL'},3);`;
   const native=note.mdcpRaw;
   const rawType=validNoteIds.has(type)?noteId(note):native?.type || type;
-  const entrance=isCurve(note)?'curve':type==='long_short'?'short':note.direction || 'normal';
+  const entrance=isCurve(note)?'curve':type==='punch'?(note.track==='air'?'down':'normal'):note.direction || 'normal';
   const end=isCurve(note)||isHold(type)&&type!=='long_short'?float(note.end):'-1';
   const exit=isCurve(note)?'NULL':native?.exit || 'NULL';
   const extra={...note.extraArgs};
   delete extra.heart;
-  if(note.hsv) extra.hsv_offset=note.hsv;else delete extra.hsv_offset;
+  if(note.hsv) extra.hsv_offset=note.hsv.split(/[~^]/).slice(0,3).join('~');else delete extra.hsv_offset;
   if(note.baseColor) extra.base_color=note.baseColor;else delete extra.base_color;
-  if(note.gradient) extra.hsv_grad=(note.gradientStart || note.hsv || '0^0^0^1')+'/'+note.gradient;else delete extra.hsv_grad;
+  if(note.gradient || note.gradientStart) extra.hsv_grad=[note.gradientStart || '0^0^0^1',note.gradient || '0^0^0^1'].join('^').replaceAll('^','~');else delete extra.hsv_grad;
   if(note.stayTexture) extra.hsv_stay_tex='true';else delete extra.hsv_stay_tex;
   const pairs=Object.entries(extra).map(([key,value])=>key+'='+String(value).replace(/[,\r\n]/g,''));
   let payload=pairs.join('|');
@@ -191,9 +198,6 @@ function writeNote(note) {
     const nodes=note.nodes.map(node=>`${curveCode[node.curve] || 's'}:${float(node.time)}:${float(node.position)}`);
     payload=nodes.join('/')+(payload?'|'+payload:'');
   } else if(!validNoteIds.has(type) && native?.extra && !payload) payload=native.extra;
-  if(type==='long_short' && native?.entrance === 'normal' && native?.exit === 'short') {
-    return `note(${rawType},${float(note.time)},normal,-1,short,${note.speed}${payload?','+payload:''});`;
-  }
   return `note(${rawType},${float(note.time)},${entrance},${end},${exit},${note.speed}${payload?','+payload:''});`;
 }
 

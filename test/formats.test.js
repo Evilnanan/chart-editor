@@ -25,7 +25,7 @@ layercaption(0,主谱面);
 layercaption(1,其他层);
 }
 maplayer{
-note(small_1_air,0.5,up,-1,NULL,1,base_color=0.1^0.2^0.3^1|hsv_offset=0^0^0^1);
+note(small_1_air,0.5,up,-1,NULL,1,base_color=#19334D|hsv_offset=0~0~0);
 note(special_hp_air,0.5,normal,-1,NULL,1);
 note(long_road,2,curve,3,NULL,2,s:2:0/b:2.5:0.6/eo:3:0);
 note(vfx_changescene,4,scene_factory,-1,NULL,3);
@@ -33,7 +33,7 @@ scene_timing(4.25,1.5);
 }
 maplayer{
 timing(3,0.5);
-note(long_air,5,normal,6,NULL,3);
+note(long_air,5,normal,6,NULL,3,hsv_grad=0~0~0~1~0.3~0.2~0.1~0.9);
 }
 `;
 
@@ -57,7 +57,8 @@ test('CustomPlay 2.1.1 record layout preserves Unicode, layers, curves and effec
   assert.match(text,/note\(long_road,2,curve,3,NULL,2,s:2:0\/b:2.5:0.6\/eo:3:0\);/);
   const reopened=parseMdcpmf(exported);
   assert.deepEqual(reopened.notes.map(note=>[note.type,note.time,note.track,note.layer]),chart.notes.map(note=>[note.type,note.time,note.track,note.layer]));
-  assert.equal(reopened.notes[0].baseColor,'0.1^0.2^0.3^1');
+  assert.equal(reopened.notes[0].baseColor,'#19334D');
+  assert.equal(reopened.notes[5].gradient,'0.3^0.2^0.1^0.9');
 });
 
 const bmsReference = `#PLAYER 1
@@ -139,7 +140,7 @@ test('Euterpe standalone manifest and current package schema preserve extra file
   const bms=strToU8(bmsReference);
   const talk=strToU8('dialogue');
   const native={schema:1,cid:42,meta:{name:'Euterpe reference',author:'Composer',bpm:120,scene:'scene_08',safe_for_streamer:true,
-    maps:{map3:{rating:'10.5',charters:['One','Two'],predicted_rating:9.9}}},files:{
+    maps:{map2:{rating:'6',charters:['One']},map3:{rating:'10.5',charters:['One','Two'],predicted_rating:9.9}}},files:{
     'map3.bms':{version:2,size:bms.length},'map3.talk':{version:1,size:talk.length},'cover.webp':{version:1,size:cover.blob.size},
   }};
   const manifest=encode(native);
@@ -149,6 +150,7 @@ test('Euterpe standalone manifest and current package schema preserve extra file
   const preserved=decode(await toBytes(raw.blob));
   assert.deepEqual(preserved.files,native.files);
   assert.equal(preserved.cid,42);
+  assert.equal(preserved.meta.maps.map2.rating,'6');
   const zip=zipSync({'manifest.epk':manifest,'map3.bms':bms,'map3.talk':talk,'cover.webp':await toBytes(cover.blob),'music.ogg':await toBytes(music.blob)});
   const loaded=await openFiles([new File([zip],'reference.zip')]);
   assert.equal(loaded.documents[0].level,'10.5');
@@ -181,4 +183,16 @@ test('grid snapping and entrance constraints account for a tempo and meter trans
   mirrorNote(note);
   assert.equal(note.track,'road');
   assert.ok(directions(note.type).includes(note.direction));
+});
+
+
+test('CustomPlay short notes and short curves preserve their native type',()=>{
+  const chart=testsChart();
+  chart.notes=[makeNote('long_short',1,'air'),makeNote('curvehold_red_short',2,'road')];
+  const bytes=serializeMdcpmf(chart);
+  const text=decodeMdcpmf(bytes);
+  assert.match(text,/note\(long_short_air,1,normal,-1,NULL,2\);/);
+  assert.match(text,/note\(curvehold_red_short,2,curve/);
+  const reopened=parseMdcpmf(bytes);
+  assert.deepEqual(reopened.notes.map(note=>note.type),['long_short','curvehold_red_short']);
 });

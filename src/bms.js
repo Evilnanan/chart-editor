@@ -145,7 +145,7 @@ export function parseBms(data,name='chart.bms',override={}) {
     previewStart:preview[0] || 0,previewEnd:preview[1] || 0,
     scene:sceneFromBms(headers.GENRE),format:'bms',audioName:headers.WAV10 || 'music.ogg',
     bmsHeaders:Object.fromEntries(Object.entries(headers).filter(([key])=>!handledHeaders.has(key)&&!/^BPM[A-Z0-9]{2}$/.test(key))),
-    bmsSourceName:name, ...override,
+    bmsSourceName:name,bmsDurationExplicit:!!headers.EDITOR_DURATION, ...override,
   });
   const transitionTicks=new Set(changes.map(change=>change.tick));
   for(let bar=1;bar<=maxBar;bar++) {
@@ -219,7 +219,7 @@ export function parseBms(data,name='chart.bms',override={}) {
     else noteList.push(makeNote('special_hp',time,lane,0,{bmsCode:code,bmsChannel:channel}));
   }
   project.notes.sort((a,b)=>a.time-b.time);
-  project.duration=Math.max(project.duration,...project.notes.map(note=>note.end+.01));
+  project.duration=project.notes.reduce((end,note)=>Math.max(end,note.end+.01),project.duration);
   return project;
 }
 
@@ -322,7 +322,7 @@ export function bmsLoss(project) {
 }
 
 export function serializeBms(project,audioName=project.audioName || 'music.ogg') {
-  const {base,ratios,changes,clock}=exportClock(project,Math.max(project.duration,...project.notes.map(note=>note.end))+.1);
+  const {base,ratios,changes,clock}=exportClock(project,project.notes.reduce((end,note)=>Math.max(end,note.end),project.duration)+.1);
   const header={
     ...project.bmsHeaders,PLAYER:1,GENRE:sceneToBms(project.scene),TITLE:project.name,ARTIST:project.artist,
     LEVELDESIGN:project.designer,BPM:base,PLAYLEVEL:project.level,LNTYPE:1,WAV10:audioName,
