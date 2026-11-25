@@ -4,6 +4,8 @@
 
 ## 打开和保存
 
+点顶部的「新建」可创建空白谱面。选择音频时，留空编辑长度即可按音频时长设置。
+
 | 格式 | 打开 | 保存 |
 | --- | --- | --- |
 | CustomPlay | `score.mdcpmf`、谱面目录或 ZIP | `score.mdcpmf` 或含 `music.ogg` 和可选 `cover.png` 的 ZIP |

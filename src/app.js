@@ -31,6 +31,7 @@ const nLabel=type=>noteTypeNames(type,s.lang);
 const difficultyNames=()=>[t('萌新','Easy','Easy'),t('高手','Hard','Hard'),t('大触','Master','Master'),t('里谱','Remaster','Remaster'),t('特殊','Special','Special'),t('色谱','Color','Color')];
 const groupLabels=()=>[t('常规','Notes','ノーツ'),t('动作','Actions','アクション'),t('特效','Effects','エフェクト'),t('节拍','Tempo','テンポ'),'MDCP','BMS'];
 let documents=[demoProject()];
+const initialDemoId=documents[0].id;
 let p=documents[0];
 let assets={extras:{}};
 let coverUrl='';
@@ -594,39 +595,69 @@ async function isVorbis(blob) {
 }
 
 function metadataDialog(create=false) {
-  const model=create?makeProject({name:'',duration:60}):p;
+  const model=create?makeProject({name:t('未命名谱面','Untitled chart','無題の譜面')}):p;
+  const audioHint=t('编辑长度留空时使用音频时长，无音频时为 60 秒。','Leave length blank to use the audio duration, or 60 seconds for a silent chart.','長さを空欄にすると音源の長さが使われます。音源がない場合は60秒です。');
   const body=`<div class="dialog-grid">
-    ${field(t('曲目标题','Title','タイトル'),input('name',model.name,'text','required maxlength="200"'),true)}
+    ${field(t('曲目标题','Title','タイトル'),input('name',model.name,'text',`required maxlength="200"${create?' autofocus':''}`),true)}
     ${field(t('艺术家','Artist','アーティスト'),input('artist',model.artist,'text','maxlength="180"'))}
     ${field(t('谱师','Charter','譜面制作者'),input('designer',model.designer,'text','maxlength="180"'))}
     ${field(t('难度','Difficulty','難易度'),select('difficulty',difficulties.map((value,i)=>[value,difficultyNames()[i]]),model.difficulty))}
     ${field(t('等级','Rating','レベル'),input('level',model.level,'text','maxlength="30"'))}
     ${field(t('场景','Scene','背景'),select('scene',scenes.map(([value,label])=>[value,label]),model.scene))}
     ${field('BPM',input('bpm',model.bpm,'number','min="1" max="9999" step="any" required'))}
-    ${field(t('编辑长度（秒）','Chart length (s)','譜面の長さ（秒）'),input('duration',model.duration,'number','min="1" max="86400" step="any" required'))}
+    ${field(t('编辑长度（秒）','Chart length (s)','譜面の長さ（秒）'),input('duration',create?'':model.duration,'number',`min="1" max="86400" step="any" ${create?`placeholder="${t('自动','Auto','自動')}" aria-describedby="new-chart-audio-hint"`:'required'}`))}
     ${field(t('项目格式','Project format','プロジェクト形式'),select('project-format',[['mdcpmf','MDCP'],['bms','BMS'],['mdm','CustomAlbums'],['epk','Euterpe']],model.format))}
     ${!create ? field(t('预览起点（秒）','Preview start (s)','試聴開始（秒）'),input('previewStart',model.previewStart,'number','min="0" step="any"')) : field(t('音频（可选）','Audio (optional)','音源（任意）'),'<input type="file" name="new-audio" accept="audio/*,.ogg,.wav,.mp3,.flac">',true)}
     ${!create ? field(t('预览结束（秒）','Preview end (s)','試聴終了（秒）'),input('previewEnd',model.previewEnd,'number','min="0" step="any"')) : ''}
-    </div>${!create && documents.length>1 ? field(t('难度谱面','Maps in this package','パッケージ内の譜面'),select('switch-chart',documents.map(chart=>[chart.id,`${chart.difficulty} · ${chart.name}`]),p.id),true):''}`;
-  dialog(create?t('新建谱面','New chart','新しい譜面'):t('谱面信息','Chart information','譜面情報'),body,create?t('创建','Create','作成'):t('应用','Apply','適用'),async data=>{
+    </div>${create?`<p id="new-chart-audio-hint">${audioHint}</p><p id="new-chart-error" class="form-error" role="alert" hidden></p>`:documents.length>1 ? field(t('难度谱面','Maps in this package','パッケージ内の譜面'),select('switch-chart',documents.map(chart=>[chart.id,`${chart.difficulty} · ${chart.name}`]),p.id),true):''}`;
+  dialog(create?t('新建谱面','New chart','新しい譜面'):t('谱面信息','Chart information','譜面情報'),body,create?t('创建谱面','Create chart','譜面を作成'):t('应用','Apply','適用'),async data=>{
     const values=Object.fromEntries(['name','artist','designer','difficulty','level','scene'].map(key=>[key,String(data.get(key)||'').trim()]));
     values.format=data.get('project-format');
-    const audio=data.get('new-audio');
     for(const key of ['bpm','duration','previewStart','previewEnd']) values[key]=num(data.get(key),model[key]);
-    if(values.previewEnd && (values.previewEnd<values.previewStart || values.previewEnd>values.duration)) throw new Error(t('预览范围无效','Invalid preview range','試聴範囲が無効です'));
     if(create) {
-      if(!s.saved && !s.autosave && !confirm(t('放弃未保存的修改并新建？','Discard unsaved changes and create a chart?','未保存の変更を破棄しますか？'))) return;
-      const chart=makeProject({...values,bmsDurationExplicit:true});
-      const nextAssets={extras:{}};
-      if(audio?.size) {
-        const buffer=await transport.decode(audio);
-        nextAssets.audio={name:audio.name,blob:audio};
-        chart.duration=round(chart.duration===60 ? buffer.duration : Math.max(chart.duration,buffer.duration));
-      }
-      await switchPackage([chart],nextAssets);
-    } else change(chart=>Object.assign(chart,values,{demo:chart.demo,bmsDurationExplicit:true}));
+      values.name ||= model.name;
+      await createChart(values,data.get('new-audio'),data.get('duration')==='');
+      return;
+    }
+    if(values.previewEnd && (values.previewEnd<values.previewStart || values.previewEnd>values.duration)) throw new Error(t('预览范围无效','Invalid preview range','試聴範囲が無効です'));
+    change(chart=>Object.assign(chart,values,{demo:chart.demo,bmsDurationExplicit:true}));
     dlg.close();
   });
+}
+
+async function createChart(values,audio,autoLength) {
+  const form=$('dialog-form');
+  const submit=form.querySelector('[type=submit]');
+  const error=$('new-chart-error');
+  error.hidden=true;
+  busy=true;
+  submit.disabled=true;
+  try {
+    let buffer;
+    const nextAssets={extras:{}};
+    if(audio?.name) {
+      try {buffer=await transport.decode(audio);}
+      catch {
+        form.elements['new-audio'].value='';
+        error.textContent=t('无法读取这段音频。请选择其他文件，或直接创建空白谱面。','Could not read this audio. Choose another file or create a silent chart.','音源を読み込めません。別のファイルを選ぶか、音源なしで作成してください。');
+        error.hidden=false;
+        return;
+      }
+      nextAssets.audio={name:audio.name,blob:audio};
+      values.duration=clamp(round(autoLength?buffer.duration:Math.max(values.duration,buffer.duration)),1,86400);
+    }
+    if(!dlg.open || $('dialog-form')!==form) return;
+    if((p.id!==initialDemoId || undo.length || s.curveDraft || !s.saved) && !confirm(t('新建谱面会替换当前工作区。要保留当前项目，请先导出。继续新建？','Creating a chart replaces the current workspace. Export the current project first if you want to keep it. Continue?','譜面を新規作成すると現在のワークスペースが置き換わります。残したいプロジェクトは先に書き出してください。続けますか？'))) return;
+    s.mobile='editor';
+    s.mode='draw';
+    s.category='normal';
+    s.noteType='small_1';
+    await switchPackage([makeProject({...values,bmsDurationExplicit:true})],nextAssets,buffer);
+    if(dlg.open && $('dialog-form')===form) dlg.close();
+  } finally {
+    busy=false;
+    submit.disabled=false;
+  }
 }
 function gridDialog() {
   dialog(t('格线与节拍','Grid & BPM','グリッドと BPM'),
@@ -668,7 +699,7 @@ function tempoDialog(tempo,create) {
     });
 }
 
-async function resetEditor() {
+async function resetEditor(decodedAudio) {
   undo=[];redo=[];s.selected.clear();s.selectedNode=null;s.curveDraft=null;s.layer=p.layers.find(layer=>layer.visible)?.id??p.layers[0].id;
   s.board=p.axes.length>0;
   if(p.format==='mdcpmf' && p.mdcpDivision) {s.division=p.mdcpDivision;s.grid=p.mdcpGrid!==false;}
@@ -677,23 +708,23 @@ async function resetEditor() {
   transport.setBuffer(null,p.duration);
   refreshCover();
   render();
-  await loadAudio();
+  await loadAudio(decodedAudio);
 }
-async function switchPackage(charts,newAssets) {
+async function switchPackage(charts,newAssets,decodedAudio) {
   documents=charts.map(normalizeProject);
   p=documents[0];
   assets=newAssets;
-  await resetEditor();
+  await resetEditor(decodedAudio);
   queueSave();
 }
 function refreshCover() {
   if(coverUrl) URL.revokeObjectURL(coverUrl);
   coverUrl=assets.cover?URL.createObjectURL(assets.cover.blob):'';
 }
-async function loadAudio() {
+async function loadAudio(decodedAudio) {
   const generation=++audioGeneration;
   try {
-    const buffer=assets.audio ? await transport.decode(assets.audio.blob) : p.demo ? makeDemoAudio(transport.context(),p.duration,p.bpm) : null;
+    const buffer=decodedAudio ?? (assets.audio ? await transport.decode(assets.audio.blob) : p.demo ? makeDemoAudio(transport.context(),p.duration,p.bpm) : null);
     if(generation!==audioGeneration) return;
     if(buffer && p.bmsSourceName && !p.bmsDurationExplicit) {
       p.duration=Math.max(p.duration,round(buffer.duration));

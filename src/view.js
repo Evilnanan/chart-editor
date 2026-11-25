@@ -56,7 +56,7 @@ export function renderTop(t,s) {
     <span class="top-sep"></span>
     <span class="save-state" id="save-state">${icon(s.saved?'check':'clock',14)} ${s.saved?t('已保存到此设备','Saved on this device','端末に保存済み'):t('正在保存','Saving','保存中')}</span>
   </div><div class="top-actions">
-    ${button('new',t('新建','New','新規'),'plus','subtle mobile-hide')}
+    ${button('new',t('新建谱面','New chart','新しい譜面'),'plus','bordered','',t('新建','New','新規'))}
     ${button('open',t('打开','Open','開く'),'folder','bordered')}
     ${button('export',t('保存 / 导出','Save / Export','保存・書き出し'),'download','primary')}
     ${iconButton('settings',t('设置','Settings','設定'),'sliders','subtle mobile-hide')}
@@ -92,7 +92,7 @@ export function renderSidebar(t,s,p,cover) {
         ${iconButton('toggle-layer',layer.visible?t('隐藏层级','Hide layer','非表示'):t('显示层级','Show layer','表示'),layer.visible?'eye':'eyeOff','small',layer.id)}
       </div>`).join('')}</section>
     <section class="side-bottom">
-      ${button('new',t('新建项目','New project','新規プロジェクト'),'plus','side-button')}
+      ${button('new',t('新建谱面','New chart','新しい譜面'),'plus','side-button')}
       ${button('settings',t('设置','Settings','設定'),'sliders','side-button')}
       ${button('help',t('操作指南','Help & shortcuts','操作ガイド'),'help','side-button')}
     </section>`;
