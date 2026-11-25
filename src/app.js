@@ -1,6 +1,6 @@
 import './style.css';
 import { icon } from './icons.js';
-import { shell,renderTop,renderSidebar,renderHeader,renderToolbar,renderTransport,renderPalette,renderBoard,renderInspector,button,iconButton,html,input,select,field,checkbox,active,stageNames,stages } from './view.js';
+import { shell,renderTop,renderSidebar,renderHeader,renderToolbar,renderTransport,renderAudioLevels,muteLabel,renderPalette,renderBoard,renderInspector,button,iconButton,html,input,select,field,checkbox,active,stageNames,stages } from './view.js';
 import { Timeline, timecode } from './timeline.js';
 import { Transport,makeDemoAudio,estimateBpm,encodeOgg } from './audio.js';
 import { readWorkspace,saveWorkspace } from './storage.js';
@@ -14,14 +14,14 @@ $('app').innerHTML=shell();
 const dlg=$('dialog');
 const defaults={
   lang:'zh_cn',division:4,curveDivision:12,snap:true,strict:true,grid:true,waveform:true,indicator:true,follow:true,mirrorDirection:true,
-  metronome:false,noteClick:false,autosave:true,filterEnabled:true,visibleLayers:false,layerOpacity:.35,otherOpacity:1,rate:1,volume:.8,
+  metronome:false,noteClick:false,autosave:true,filterEnabled:true,visibleLayers:false,layerOpacity:.35,otherOpacity:1,rate:1,volume:.8,lastVolume:.8,waveformGain:1,
   defaultAxis:'vfx_changescene',fps:60,vsync:true,clipOffset:0,multi:false,slideFill:false,submode:'object',
 };
 const settingsKey='muse-studio-settings-v1';
 let persisted={};
 try {persisted=JSON.parse(localStorage.getItem(settingsKey) || '{}') || {};} catch {}
 const s={
-  ...defaults,...persisted, mode:'select',noteType:'small_1',category:'normal',layer:0,board:false,mobile:'editor',saved:true,
+  ...defaults,...persisted, mode:'select',noteType:'small_1',category:'normal',layer:0,board:false,mobile:'editor',saved:true,audioLevels:false,
   hiddenTracks:new Set(persisted.hiddenTracks),hiddenTypes:new Set(persisted.hiddenTypes),hiddenGroups:new Set(persisted.hiddenGroups),
   selectionTypes:new Set(persisted.selectionTypes),selected:new Set(),selectedNode:null,curveDraft:null,curveType:'Linear',
   loopEnabled:false,loopStart:0,loopEnd:15,clipboard:[],placementDirection:'normal',placementSpeed:2,
@@ -46,6 +46,8 @@ let saving=0;
 let busy=false;
 let formHandler;
 let filterList='';
+const decodedFiles=new WeakMap();
+const bpmRequests=new WeakMap();
 const transport=new Transport(()=>updatePlayControls());
 const preview=new Playtest($('preview'),transport,()=>p,t,icon,()=>{updatePlayControls();timeline.draw();});
 const timeline=new Timeline($('canvas-wrap'),$('lane-labels'),$('scrub'),{
@@ -74,6 +76,9 @@ async function initialize() {
 
 function applyPreferences() {
   document.documentElement.lang=({zh_cn:'zh-CN',en_us:'en',ja_jp:'ja'})[s.lang] || 'zh-CN';
+  s.volume=clamp(num(s.volume,.8),0,1);
+  s.lastVolume=s.volume || clamp(num(s.lastVolume,.8),.01,1);
+  s.waveformGain=clamp(num(s.waveformGain,1),.25,4);
   transport.setRate(s.rate);
   transport.setVolume(s.volume);
 }
@@ -88,6 +93,7 @@ function render() {
   $('sidebar').innerHTML=renderSidebar(t,s,p,coverUrl);
   $('project-head').innerHTML=renderHeader(t,s,p);
   renderTools();
+  if(s.audioLevels) $('audio-levels').innerHTML=renderAudioLevels(t,s);
   renderPaletteOnly();
   updateInspector();
   renderStatus();
@@ -109,7 +115,41 @@ function renderTools() {
 }
 function updatePlayControls() {
   $('transport').innerHTML=renderTransport(t,s,transport.time(),p.duration,transport.playing);
+  const levels=$('transport').querySelector('[data-action=audio-levels]');
+  levels.setAttribute('aria-controls','audio-levels');
+  levels.setAttribute('aria-expanded',String(s.audioLevels));
   updateZoom();
+}
+function toggleAudioLevels() {
+  s.audioLevels=!s.audioLevels;
+  const panel=$('audio-levels');
+  panel.hidden=!s.audioLevels;
+  if(s.audioLevels) panel.innerHTML=renderAudioLevels(t,s);
+  for(const control of document.querySelectorAll('[data-action=audio-levels]')) {
+    control.setAttribute('aria-expanded',String(s.audioLevels));
+    if(control.classList.contains('level-toggle')) control.classList.toggle('active',s.audioLevels);
+  }
+}
+function setAudioLevel(name,value) {
+  if(name==='volume') {
+    s.volume=clamp(value,0,1);
+    if(s.volume) s.lastVolume=s.volume;
+    transport.setVolume(s.volume);
+    const mute=$('transport').querySelector('[data-action=mute]');
+    mute.title=muteLabel(t,s);
+    mute.setAttribute('aria-label',mute.title);
+    mute.classList.toggle('active',!s.volume);
+  } else {
+    s.waveformGain=clamp(value,.25,4);
+    timeline.draw();
+  }
+  const percent=Math.round(s[name]*100)+'%';
+  for(const control of document.querySelectorAll(`input[name="${name}"]`)) {
+    if(Number(control.value)!==s[name]) control.value=s[name];
+    control.setAttribute('aria-valuetext',percent);
+  }
+  for(const output of document.querySelectorAll(`[data-level-value="${name}"]`)) output.value=percent;
+  storePreferences();
 }
 function updateZoom() {
   const label=$('zoom-val');
@@ -609,14 +649,14 @@ function metadataDialog(create=false) {
     ${field(t('项目格式','Project format','プロジェクト形式'),select('project-format',[['mdcpmf','MDCP'],['bms','BMS'],['mdm','CustomAlbums'],['epk','Euterpe']],model.format))}
     ${!create ? field(t('预览起点（秒）','Preview start (s)','試聴開始（秒）'),input('previewStart',model.previewStart,'number','min="0" step="any"')) : field(t('音频（可选）','Audio (optional)','音源（任意）'),'<input type="file" name="new-audio" accept="audio/*,.ogg,.wav,.mp3,.flac">',true)}
     ${!create ? field(t('预览结束（秒）','Preview end (s)','試聴終了（秒）'),input('previewEnd',model.previewEnd,'number','min="0" step="any"')) : ''}
-    </div>${create?`<p id="new-chart-audio-hint">${audioHint}</p><p id="new-chart-error" class="form-error" role="alert" hidden></p>`:documents.length>1 ? field(t('难度谱面','Maps in this package','パッケージ内の譜面'),select('switch-chart',documents.map(chart=>[chart.id,`${chart.difficulty} · ${chart.name}`]),p.id),true):''}`;
+    </div>${create?`<p id="new-chart-audio-hint">${audioHint}</p>${bpmControls()}<p id="new-chart-error" class="form-error" role="alert" hidden></p>`:documents.length>1 ? field(t('难度谱面','Maps in this package','パッケージ内の譜面'),select('switch-chart',documents.map(chart=>[chart.id,`${chart.difficulty} · ${chart.name}`]),p.id),true):''}`;
   dialog(create?t('新建谱面','New chart','新しい譜面'):t('谱面信息','Chart information','譜面情報'),body,create?t('创建谱面','Create chart','譜面を作成'):t('应用','Apply','適用'),async data=>{
     const values=Object.fromEntries(['name','artist','designer','difficulty','level','scene'].map(key=>[key,String(data.get(key)||'').trim()]));
     values.format=data.get('project-format');
     for(const key of ['bpm','duration','previewStart','previewEnd']) values[key]=num(data.get(key),model[key]);
     if(create) {
       values.name ||= model.name;
-      await createChart(values,data.get('new-audio'),data.get('duration')==='');
+      await createChart(values,$('dialog-form').elements['new-audio'].files[0],data.get('duration')==='');
       return;
     }
     if(values.previewEnd && (values.previewEnd<values.previewStart || values.previewEnd>values.duration)) throw new Error(t('预览范围无效','Invalid preview range','試聴範囲が無効です'));
@@ -636,13 +676,19 @@ async function createChart(values,audio,autoLength) {
     let buffer;
     const nextAssets={extras:{}};
     if(audio?.name) {
-      try {buffer=await transport.decode(audio);}
+      try {buffer=await decodeNewAudio(audio);}
       catch {
+        if(!dlg.open || $('dialog-form')!==form || form.elements['new-audio'].files[0]!==audio) return;
         form.elements['new-audio'].value='';
+        form.elements['new-audio'].dispatchEvent(new Event('change',{bubbles:true}));
         error.textContent=t('无法读取这段音频。请选择其他文件，或直接创建空白谱面。','Could not read this audio. Choose another file or create a silent chart.','音源を読み込めません。別のファイルを選ぶか、音源なしで作成してください。');
         error.hidden=false;
         return;
       }
+      const request=bpmRequests.get(form);
+      if(request?.file===audio && !form.elements.bpm.dataset.edits) await request.promise;
+      if(form.elements['new-audio'].files[0]!==audio) return;
+      values.bpm=clamp(num(form.elements.bpm.value,values.bpm),1,9999);
       nextAssets.audio={name:audio.name,blob:audio};
       values.duration=clamp(round(autoLength?buffer.duration:Math.max(values.duration,buffer.duration)),1,86400);
     }
@@ -659,6 +705,56 @@ async function createChart(values,audio,autoLength) {
     submit.disabled=false;
   }
 }
+
+function bpmControls(high=false) {
+  return `<div class="bpm-actions">
+    ${button('estimate',t('自动测算 BPM','Detect BPM','BPM を自動検出'),'metronome','bordered','normal')}
+    ${high?button('estimate',t('高 BPM 测算','Detect fast BPM','高 BPM を検出'),'metronome','bordered','high'):''}
+    </div><p class="bpm-status" role="status" hidden></p>`;
+}
+function setBpmStatus(form,message,error=false) {
+  const status=form.querySelector('.bpm-status');
+  status.textContent=message;
+  status.hidden=!message;
+  status.classList.toggle('form-error',error);
+}
+function decodeNewAudio(file) {
+  if(!decodedFiles.has(file)) decodedFiles.set(file,transport.decode(file));
+  return decodedFiles.get(file);
+}
+function measureFormBpm(form,mode) {
+  const field=form.elements.bpm;
+  const input=form.elements['new-audio'];
+  const file=input?.files[0];
+  const revision=field.dataset.edits;
+  const request={file};
+  bpmRequests.set(form,request);
+  const current=()=>dlg.open && $('dialog-form')===form && bpmRequests.get(form)===request;
+  const buttons=form.querySelectorAll('[data-action=estimate]');
+  buttons.forEach(control=>control.disabled=true);
+  setBpmStatus(form,t('正在测算 BPM…','Detecting BPM…','BPM を検出中…'));
+  request.promise=(async()=>{
+    try {
+      const audio=input ? (file && await decodeNewAudio(file)) : transport.buffer;
+      if(!current()) return;
+      if(!audio) return setBpmStatus(form,t('请先选择音频。','Choose audio first.','先に音源を選択してください。'),true);
+      const bpm=await estimateBpm(audio,mode==='high');
+      if(!current()) return;
+      if(bpm===null) return setBpmStatus(form,t('未能辨识稳定节拍，请手动填写 BPM。','No stable beat was detected. Enter the BPM manually.','安定した拍を検出できませんでした。BPM を手入力してください。'),true);
+      if(field.dataset.edits===revision) {
+        field.value=bpm;
+        field.dataset.detected='true';
+        delete field.dataset.edits;
+      }
+      setBpmStatus(form,t(`测算结果 · ${bpm} BPM`,`Estimated tempo · ${bpm} BPM`,`推定テンポ · ${bpm} BPM`));
+    } catch {
+      if(current()) setBpmStatus(form,t('无法读取音频以测算 BPM。','Could not read the audio for BPM detection.','BPM の検出に必要な音源を読み込めません。'),true);
+    } finally {
+      if(current()) buttons.forEach(control=>control.disabled=false);
+    }
+  })();
+  return request.promise;
+}
 function gridDialog() {
   dialog(t('格线与节拍','Grid & BPM','グリッドと BPM'),
     `<div class="dialog-grid">
@@ -671,8 +767,7 @@ function gridDialog() {
       ${checkbox('grid',t('显示格线','Show grid','グリッドを表示'),s.grid)}
       ${checkbox('strict',t('严格吸附','Strict snap','厳密な吸着'),s.strict)}
     </div>
-    <div class="dialog-row">${button('estimate',t('估测 BPM','Estimate BPM','BPM を検出'),'metronome','bordered','normal')}
-    ${button('estimate',t('高范围估测','High-range estimate','高 BPM を検出'),'metronome','bordered','high')}</div>
+    ${bpmControls(true)}
     ${button('tempo-here',t('在播放头处添加节拍点','Add tempo marker at playhead','再生ヘッドにテンポ点を追加'),'plus','bordered')}`,
     t('应用','Apply','適用'),data=>{
       for(const key of ['division','curveDivision']) s[key]=num(data.get(key),s[key]);
@@ -843,7 +938,7 @@ function audioDialog() {
       ['choose-cover',t('选择封面','Choose cover','カバーを選択'),assets.cover?.name || t('PNG、WebP、GIF 等','PNG, WebP, GIF and more','PNG、WebP、GIF など'),'file'],
     ])+`<div class="dialog-grid">
       ${field(t('BMS 音频名称','BMS audio filename','BMS 音源ファイル名'),input('audioName',p.audioName,'text','maxlength="150" aria-describedby="bms-filename"'),true)}
-      ${field(t('音量','Volume','音量'),input('volume',s.volume,'range','min="0" max="1" step=".01"'))}
+      ${renderAudioLevels(t,s)}
       ${checkbox('waveform',t('显示波形','Show waveform','波形を表示'),s.waveform)}
     </div><p id="bms-filename">${t('用于 BMS 的 #WAV10 引用。MDCP 和 Euterpe 谱面包使用 music.ogg。','Used by the BMS #WAV10 reference. MDCP and Euterpe packages use music.ogg.','BMS の #WAV10 の参照先。MDCP と Euterpe は music.ogg を使用します。')}</p>
     ${assets.cover?button('remove-cover',t('移除封面','Remove cover','カバーを削除'),'trash','danger bordered'):''}
@@ -853,7 +948,7 @@ function audioDialog() {
       const name=String(data.get('audioName')||'').trim();
       if(/[\\/:*?"<>|]/.test(name)) throw new Error(t('音频文件名含有无效字符','Invalid audio filename','無効なファイル名です'));
       change(chart=>{chart.audioName=name || 'music.ogg';});
-      s.volume=num(data.get('volume'),s.volume);s.waveform=data.has('waveform');
+      s.waveform=data.has('waveform');
       applyPreferences();storePreferences();render();dlg.close();
     });
 }
@@ -1012,7 +1107,8 @@ const actions={
   multi:()=>{s.multi=!s.multi;storePreferences();renderTools();},
   follow:()=>{s.follow=!s.follow;storePreferences();renderTools();},
   rewind:()=>seek(0,true), play, 'zoom-in':()=>timeline.zoom(1.35), 'zoom-out':()=>timeline.zoom(1/1.35),
-  mute:()=>{s.volume=s.volume?0:.8;transport.setVolume(s.volume);storePreferences();updatePlayControls();},
+  mute:()=>setAudioLevel('volume',s.volume?0:s.lastVolume),
+  'audio-levels':toggleAudioLevels,
   loop:()=>{if(s.loopEnabled) {s.loopEnabled=false;updatePlayControls();timeline.draw();} else loopDialog();},
   preview:()=>preview.show(transport.time()),
   'preview-range':()=>{dlg.close();preview.show(p.previewStart || 0,true);},
@@ -1046,14 +1142,7 @@ const actions={
   copy:()=>{copy();if(dlg.open)dlg.close();}, 'copy-layer':()=>copy(true), paste:()=>{paste();if(dlg.open)dlg.close();},
   mirror:()=>change(chart=>chart.notes.filter(note=>s.selected.has(note.id)).forEach(note=>mirrorNote(note,s.mirrorDirection))),
   delete:()=>{if(s.submode==='node'&&s.selectedNode) actions['node-delete'](s.selectedNode.index);else remove([...s.selected]);},
-  estimate:async value=>{
-    if(!transport.buffer) return showToast(t('请先添加音频','Add audio first','先に音源を追加してください'),true);
-    const element=dlg.querySelector('[name=bpm]');
-    if(element) {
-      element.value=estimateBpm(transport.buffer,value==='high');
-      showToast(t('已填入估测 BPM，请核对后应用。','Estimated BPM inserted. Review and apply.','推定 BPM を入力しました。確認して適用してください。'));
-    }
-  },
+  estimate:value=>measureFormBpm($('dialog-form'),value),
   'tempo-here':()=>addTempo(snap(transport.time())),
   check:checkDialog,
   'copy-findings':async()=>{await navigator.clipboard.writeText(findings().map(x=>timecode(x.time)+' '+x.label).join('\n'));showToast(t('已复制检查结果','Report copied','レポートをコピーしました'));},
@@ -1114,6 +1203,19 @@ document.addEventListener('change',async event=>{
   }
   else if(el.name==='rate') {s.rate=num(el.value,1);transport.setRate(s.rate);storePreferences();}
   else if(el.name==='vsync') dlg.querySelector('[name=fps]').disabled=el.checked;
+  else if(el.name==='new-audio') {
+    const form=el.form;
+    const bpm=form.elements.bpm;
+    bpmRequests.delete(form);
+    form.querySelectorAll('[data-action=estimate]').forEach(control=>control.disabled=false);
+    setBpmStatus(form,'');
+    $('new-chart-error').hidden=true;
+    if(bpm.dataset.detected) {
+      bpm.value=bpm.defaultValue;
+      delete bpm.dataset.detected;
+    }
+    if(el.files.length && !bpm.dataset.edits) await measureFormBpm(form,'normal');
+  }
   else if(el.name==='switch-chart') {
     p=documents.find(chart=>chart.id===el.value)||p;await resetEditor();dlg.close();queueSave();
   } else if(el.id==='file-input'||el.id==='folder-input') {
@@ -1137,7 +1239,12 @@ document.addEventListener('change',async event=>{
   }
 });
 document.addEventListener('input',event=>{
-  if(event.target.name==='volume') {s.volume=num(event.target.value);transport.setVolume(s.volume);storePreferences();}
+  const input=event.target;
+  if(input.name==='volume' || input.name==='waveformGain') setAudioLevel(input.name,num(input.value,s[input.name]));
+  else if(input.name==='bpm') {
+    input.dataset.edits=String(num(input.dataset.edits)+1);
+    delete input.dataset.detected;
+  }
 });
 window.addEventListener('dragover',event=>{if(event.dataTransfer.types.includes('Files'))event.preventDefault();});
 window.addEventListener('drop',event=>{

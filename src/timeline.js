@@ -87,15 +87,27 @@ export class Timeline {
         element.className='lane-label '+(row.axis?'axis-label':row.id);
         element.style.height=row.height+'px';
         if(row.color) element.style.setProperty('--lane',row.color);
+        let label=element;
+        if(row.id==='wave') {
+          label=document.createElement('button');
+          label.type='button';
+          label.className='wave-control';
+          label.dataset.action='audio-levels';
+          label.title=translate('波形与音量','Waveform and volume','波形と音量');
+          label.setAttribute('aria-label',label.title);
+          label.setAttribute('aria-controls','audio-levels');
+          label.setAttribute('aria-expanded',String(this.api.state.audioLevels));
+          element.append(label);
+        }
         if(row.icon) {
           const symbol=document.createElement('span');
           symbol.className='lane-icon';
           symbol.innerHTML=icon(row.icon,15);
-          element.append(symbol);
+          label.append(symbol);
         }
         const name=document.createElement('span');
         name.textContent=row.name || translate('小节','BAR','小節');
-        element.append(name);
+        label.append(name);
         if(row.axis) {
           const button=document.createElement('button');
           button.className='icon small';
@@ -248,6 +260,7 @@ export class Timeline {
     ctx.beginPath();ctx.moveTo(0,mid+.5);ctx.lineTo(width,mid+.5);ctx.stroke();
     if(!peaks) return;
     const duration=this.api.audioDuration();
+    const gain=this.api.state.waveformGain;
     const gradient=ctx.createLinearGradient(0,row.y,0,row.y+row.height);
     gradient.addColorStop(0,'#9390c6');gradient.addColorStop(.5,'#525077');gradient.addColorStop(1,'#9390c6');
     ctx.fillStyle=gradient;
@@ -258,7 +271,7 @@ export class Timeline {
       const last=Math.floor(this.time(x+2)/duration*peaks.length);
       let value=0;
       for(let i=first;i<=last;i++) value=Math.max(value,peaks[i] || 0);
-      const h=Math.max(1,Math.min(row.height*.46,value*row.height*1.38));
+      const h=Math.max(1,Math.min(row.height*.46,value*row.height*1.38*gain));
       ctx.fillRect(x,mid-h,1.25,h*2);
     }
   }

@@ -29,6 +29,7 @@ export function shell() {
         </div>
         <div class="scrub" id="scrub" role="slider" aria-orientation="horizontal" aria-valuemin="0" tabindex="0"><div class="scrub-thumb"></div></div>
         <div class="transport" id="transport"></div>
+        <div id="audio-levels" class="audio-levels" hidden></div>
         <div class="board-head" id="board-head" hidden></div>
       </section>
       <section class="palette" id="palette"></section>
@@ -104,7 +105,7 @@ export function renderHeader(t,s,p) {
     <h1>${html(p.name)}</h1>
     <div class="project-meta">
       <span class="badge">${html(p.difficulty)} ${p.level?`· ${html(p.level)}`:''}</span>
-      <span class="subsep">·</span><span>${html(p.bpm)} BPM</span>
+      <span class="subsep">·</span>${button('grid-settings',t('格线与 BPM','Grid & BPM','グリッドと BPM'),null,'meta-bpm','',p.bpm+' BPM')}
       <span class="subsep">·</span><span>${html(p.numerator)}/${html(p.denominator)}</span>
       ${p.artist?`<span class="subsep">·</span><span>${html(p.artist)}</span>`:''}
     </div>
@@ -141,8 +142,9 @@ export function renderTransport(t,s,position,duration,playing) {
     ${iconButton('loop',t('循环播放','Loop playback','ループ再生'),'loop',active(s.loopEnabled))}
   </div>
   <div class="transport-group">
-    ${iconButton('mute',t('静音','Mute','ミュート'),'volume','subtle volume-icon')}
-    <input class="volume-slider" type="range" name="volume" min="0" max="1" step=".01" value="${s.volume}" aria-label="${t('音量','Volume','音量')}">
+    ${muteButton(t,s)}
+    <input class="volume-slider" type="range" name="volume" min="0" max="1" step=".01" value="${s.volume}" aria-label="${t('播放音量','Playback volume','再生音量')}">
+    ${iconButton('audio-levels',t('波形与音量','Waveform and volume','波形と音量'),'sliders','subtle level-toggle'+active(s.audioLevels))}
     ${select('rate',[.25,.5,.75,1,1.25,1.5,2].map(rate=>[rate,rate+'×']),s.rate,`aria-label="${t('播放速度','Playback speed','再生速度')}"`)}
   </div>
   <div class="zoom-group">
@@ -150,6 +152,19 @@ export function renderTransport(t,s,position,duration,playing) {
     <span id="zoom-val" class="mono zoom-val"></span>
     ${iconButton('zoom-in',t('放大时间轴','Zoom in','拡大'),'plus','subtle')}
   </div>`;
+}
+
+export const muteLabel=(t,s)=>s.volume?t('静音','Mute','ミュート'):t('取消静音','Unmute','ミュート解除');
+const muteButton=(t,s)=>iconButton('mute',muteLabel(t,s),'volume','subtle volume-icon'+active(!s.volume));
+
+export function renderAudioLevels(t,s) {
+  return [
+    ['volume',t('播放音量','Playback volume','再生音量'),0,1,.01],
+    ['waveformGain',t('波形增益','Waveform gain','波形ゲイン'),.25,4,.05],
+  ].map(([name,label,min,max,step])=>`<label class="field audio-level"><span>${html(label)}
+    <output class="mono" data-level-value="${name}">${Math.round(s[name]*100)}%</output></span>
+    ${input(name,s[name],'range',`min="${min}" max="${max}" step="${step}" aria-label="${html(label)}" aria-valuetext="${Math.round(s[name]*100)}%"`)}
+  </label>`).join('');
 }
 
 export function renderPalette(t,s) {

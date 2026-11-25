@@ -133,13 +133,15 @@ export class Transport {
 }
 
 function waveform(buffer) {
-  const samples=buffer.getChannelData(0);
+  const channels=Array.from({length:Math.min(2,buffer.numberOfChannels)},(_,i)=>buffer.getChannelData(i));
   const count=Math.min(24000,Math.max(800,Math.ceil(buffer.duration*240)));
-  const step=samples.length/count;
+  const step=buffer.length/count;
   const peaks=new Float32Array(count);
   for (let i=0;i<count;i++) {
     let peak=0;
-    for (let j=Math.floor(i*step);j<(i+1)*step;j+=Math.max(1,Math.floor(step/36))) peak=Math.max(peak,Math.abs(samples[j] || 0));
+    for (const samples of channels) {
+      for (let j=Math.floor(i*step);j<(i+1)*step;j+=Math.max(1,Math.floor(step/36))) peak=Math.max(peak,Math.abs(samples[j] || 0));
+    }
     peaks[i]=peak;
   }
   return peaks;
@@ -183,36 +185,63 @@ export async function encodeOgg(buffer) {
   return new Blob(parts,{type:'audio/ogg'});
 }
 
-export function estimateBpm(buffer, high=false) {
-  const data=buffer.getChannelData(0);
+export async function estimateBpm(buffer, high=false) {
   const hop=Math.max(1,Math.floor(buffer.sampleRate/200));
-  const envelope=[];
+  const length=Math.floor(Math.min(buffer.length,buffer.sampleRate*150)/hop);
+  if(length<600) return null;
+  const channels=Array.from({length:Math.min(2,buffer.numberOfChannels)},(_,i)=>buffer.getChannelData(i));
+  const envelope=new Float32Array(length);
+  const yieldFrame=()=>new Promise(resolve=>setTimeout(resolve,0));
   let level=0;
-  for (let i=0;i+hop<data.length && i<buffer.sampleRate*150;i+=hop) {
+  let maxLevel=0, maxOnset=0, mean=0;
+  for (let frame=0;frame<length;frame++) {
+    const start=frame*hop;
     let energy=0;
-    for (let j=i;j<i+hop;j+=4) energy+=data[j]**2;
-    energy=Math.sqrt(energy/hop);
-    envelope.push(Math.max(0,energy-level));
-    level=level*.87+energy*.13;
+    for(const data of channels) for(let j=start;j<start+hop;j+=4) energy+=data[j]**2;
+    energy=Math.sqrt(energy/(channels.length*Math.ceil(hop/4)));
+    if(frame===0) level=energy;
+    const onset=Math.max(0,energy-level);
+    envelope[frame]=onset;
+    mean+=onset;
+    maxOnset=Math.max(maxOnset,onset);
+    maxLevel=Math.max(maxLevel,energy);
+    level+=.13*(energy-level);
+    if(frame && frame%2500===0) await yieldFrame();
   }
+  if(maxLevel<1e-5 || maxOnset<maxLevel*.08) return null;
+  mean/=length;
+  for(let i=0;i<length;i++) envelope[i]-=mean;
   const rate=buffer.sampleRate/hop;
   const correlation = lag => {
-    let sum=0;
-    for(let i=lag;i<envelope.length;i++) sum+=envelope[i]*envelope[i-lag];
-    return sum/(envelope.length-lag);
+    let score=0, left=0, right=0;
+    for(let i=lag;i<length;i++) {
+      const a=envelope[i], b=envelope[i-lag];
+      score+=a*b;
+      left+=a*a;
+      right+=b*b;
+    }
+    return left*right ? score/Math.sqrt(left*right) : 0;
   };
   const min=high ? 180 : 62;
   const max=high ? 500 : 295;
-  const values=new Map();
-  for(let lag=Math.floor(60*rate/max)-1;lag<=Math.ceil(120*rate/min)+1;lag++) values.set(lag,correlation(lag));
-  let best=0, winner=0;
-  for(let lag=Math.ceil(60*rate/max);lag<=Math.floor(60*rate/min);lag++) {
+  const first=Math.floor(60*rate/max);
+  const last=Math.ceil(60*rate/min);
+  const values=new Float32Array(2*last+3);
+  for(let lag=first-1;lag<values.length;lag++) {
+    values[lag]=correlation(lag);
+    if(lag%40===0) await yieldFrame();
+  }
+  const scoreAt=lag=>{
     const bpm=60*rate/lag;
-    const score=(values.get(lag)+.55*values.get(lag*2))*(high ? 1 : Math.exp(-(((bpm-135)/180)**2)));
+    return (values[lag]+.45*values[2*lag])*(high?1:Math.exp(-(((bpm-135)/140)**2)));
+  };
+  let best=0, winner=0;
+  for(let lag=first;lag<=last;lag++) {
+    const score=scoreAt(lag);
     if (score>best) {best=score;winner=lag;}
   }
-  if (!winner) throw new Error('无法从音频辨识节拍');
-  const a=values.get(winner-1),b=values.get(winner),c=values.get(winner+1);
+  if(!winner || values[winner]<.18 || length/winner<4) return null;
+  const a=values[winner-1],b=values[winner],c=values[winner+1];
   const delta=a+c===2*b ? 0 : Math.max(-.5,Math.min(.5,(a-c)/(2*(a+c-2*b))));
-  return Math.round(60*rate/(winner+delta)*100)/100;
+  return Math.round(Math.min(max,Math.max(min,60*rate/(winner+delta)))*100)/100;
 }
