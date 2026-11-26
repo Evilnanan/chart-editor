@@ -2,7 +2,7 @@ import './style.css';
 import { icon } from './icons.js';
 import { shell,renderTop,renderSidebar,renderHeader,renderToolbar,renderTransport,renderAudioLevels,muteLabel,renderPalette,renderBoard,renderInspector,button,iconButton,html,input,select,field,checkbox,active,stageNames,stages } from './view.js';
 import { Timeline, timecode } from './timeline.js';
-import { Transport,makeDemoAudio,estimateBpm,encodeOgg } from './audio.js';
+import { Transport,makeDemoAudio,estimateBpm,encodeOgg,readAudioDetails } from './audio.js';
 import { readWorkspace,saveWorkspace } from './storage.js';
 import { Playtest } from './playtest.js';
 import { openFiles,exportFile,formatLoss,makePng } from './formats.js';
@@ -46,7 +46,7 @@ let saving=0;
 let busy=false;
 let formHandler;
 let filterList='';
-const decodedFiles=new WeakMap();
+const newAudioRequests=new WeakMap();
 const bpmRequests=new WeakMap();
 const transport=new Transport(()=>updatePlayControls());
 const preview=new Playtest($('preview'),transport,()=>p,t,icon,()=>{updatePlayControls();timeline.draw();});
@@ -636,63 +636,74 @@ async function isVorbis(blob) {
 
 function metadataDialog(create=false) {
   const model=create?makeProject({name:t('未命名谱面','Untitled chart','無題の譜面')}):p;
-  const audioHint=t('编辑长度留空时使用音频时长，无音频时为 60 秒。','Leave length blank to use the audio duration, or 60 seconds for a silent chart.','長さを空欄にすると音源の長さが使われます。音源がない場合は60秒です。');
-  const body=`<div class="dialog-grid">
-    ${field(t('曲目标题','Title','タイトル'),input('name',model.name,'text',`required maxlength="200"${create?' autofocus':''}`),true)}
+  const audioPicker=`<div class="new-audio">
+    ${field(t('音频（可选）','Audio (optional)','音源（任意）'),'<input type="file" name="new-audio" accept="audio/*,.ogg,.wav,.mp3,.flac,.m4a,.opus" aria-describedby="new-chart-audio-hint" autofocus>')}
+    <p id="new-chart-audio-hint">${t('选择音频即可自动填写曲目信息。也可以直接创建空白谱面。','Choose audio to fill in track details, or create a blank chart.','音源から曲情報を自動入力できます。音源なしで譜面を作成することもできます。')}</p>
+    <div id="new-chart-audio-selection" hidden>${button('clear-new-audio',t('移除所选音频','Remove selected audio','選択した音源を外す'),null,'bordered')}</div>
+    <p id="new-chart-audio-status" role="status" hidden></p>
+    <p id="new-chart-error" class="form-error" role="alert" hidden></p>
+    </div>`;
+  const body=`${create?audioPicker:''}<div class="dialog-grid">
+    ${field(t('曲目标题','Title','タイトル'),input('name',model.name,'text','required maxlength="200"'),true)}
     ${field(t('艺术家','Artist','アーティスト'),input('artist',model.artist,'text','maxlength="180"'))}
     ${field(t('谱师','Charter','譜面制作者'),input('designer',model.designer,'text','maxlength="180"'))}
     ${field(t('难度','Difficulty','難易度'),select('difficulty',difficulties.map((value,i)=>[value,difficultyNames()[i]]),model.difficulty))}
     ${field(t('等级','Rating','レベル'),input('level',model.level,'text','maxlength="30"'))}
     ${field(t('场景','Scene','背景'),select('scene',scenes.map(([value,label])=>[value,label]),model.scene))}
     ${field('BPM',input('bpm',model.bpm,'number','min="1" max="9999" step="any" required'))}
-    ${field(t('编辑长度（秒）','Chart length (s)','譜面の長さ（秒）'),input('duration',create?'':model.duration,'number',`min="1" max="86400" step="any" ${create?`placeholder="${t('自动','Auto','自動')}" aria-describedby="new-chart-audio-hint"`:'required'}`))}
+    ${field(t('编辑长度（秒）','Chart length (s)','譜面の長さ（秒）'),input('duration',create?'':model.duration,'number',`min="1" max="86400" step="any" ${create?`placeholder="${model.duration}"`:'required'}`))}
     ${field(t('项目格式','Project format','プロジェクト形式'),select('project-format',[['mdcpmf','MDCP'],['bms','BMS'],['mdm','CustomAlbums'],['epk','Euterpe']],model.format))}
-    ${!create ? field(t('预览起点（秒）','Preview start (s)','試聴開始（秒）'),input('previewStart',model.previewStart,'number','min="0" step="any"')) : field(t('音频（可选）','Audio (optional)','音源（任意）'),'<input type="file" name="new-audio" accept="audio/*,.ogg,.wav,.mp3,.flac">',true)}
+    ${!create ? field(t('预览起点（秒）','Preview start (s)','試聴開始（秒）'),input('previewStart',model.previewStart,'number','min="0" step="any"')) : ''}
     ${!create ? field(t('预览结束（秒）','Preview end (s)','試聴終了（秒）'),input('previewEnd',model.previewEnd,'number','min="0" step="any"')) : ''}
-    </div>${create?`<p id="new-chart-audio-hint">${audioHint}</p>${bpmControls()}<p id="new-chart-error" class="form-error" role="alert" hidden></p>`:documents.length>1 ? field(t('难度谱面','Maps in this package','パッケージ内の譜面'),select('switch-chart',documents.map(chart=>[chart.id,`${chart.difficulty} · ${chart.name}`]),p.id),true):''}`;
+    </div>${create?bpmControls():documents.length>1 ? field(t('难度谱面','Maps in this package','パッケージ内の譜面'),select('switch-chart',documents.map(chart=>[chart.id,`${chart.difficulty} · ${chart.name}`]),p.id),true):''}`;
   dialog(create?t('新建谱面','New chart','新しい譜面'):t('谱面信息','Chart information','譜面情報'),body,create?t('创建谱面','Create chart','譜面を作成'):t('应用','Apply','適用'),async data=>{
-    const values=Object.fromEntries(['name','artist','designer','difficulty','level','scene'].map(key=>[key,String(data.get(key)||'').trim()]));
-    values.format=data.get('project-format');
-    for(const key of ['bpm','duration','previewStart','previewEnd']) values[key]=num(data.get(key),model[key]);
-    if(create) {
-      values.name ||= model.name;
-      await createChart(values,$('dialog-form').elements['new-audio'].files[0],data.get('duration')==='');
-      return;
-    }
+    if(create) return createChart($('dialog-form'),model);
+    const values=chartDetails(data,model);
     if(values.previewEnd && (values.previewEnd<values.previewStart || values.previewEnd>values.duration)) throw new Error(t('预览范围无效','Invalid preview range','試聴範囲が無効です'));
     change(chart=>Object.assign(chart,values,{demo:chart.demo,bmsDurationExplicit:true}));
     dlg.close();
   });
 }
 
-async function createChart(values,audio,autoLength) {
-  const form=$('dialog-form');
+function chartDetails(data,model) {
+  const values=Object.fromEntries(['name','artist','designer','difficulty','level','scene'].map(key=>[key,String(data.get(key)||'').trim()]));
+  values.format=data.get('project-format');
+  for(const key of ['bpm','duration','previewStart','previewEnd']) values[key]=num(data.get(key),model[key]);
+  return values;
+}
+
+async function createChart(form,model) {
   const submit=form.querySelector('[type=submit]');
   const error=$('new-chart-error');
-  error.hidden=true;
+  const input=form.elements['new-audio'];
+  const audio=newAudioRequests.get(form);
+  const current=()=>dlg.open && $('dialog-form')===form && newAudioRequests.get(form)===audio;
   busy=true;
   submit.disabled=true;
   try {
     let buffer;
     const nextAssets={extras:{}};
-    if(audio?.name) {
-      try {buffer=await decodeNewAudio(audio);}
-      catch {
-        if(!dlg.open || $('dialog-form')!==form || form.elements['new-audio'].files[0]!==audio) return;
-        form.elements['new-audio'].value='';
-        form.elements['new-audio'].dispatchEvent(new Event('change',{bubbles:true}));
-        error.textContent=t('无法读取这段音频。请选择其他文件，或直接创建空白谱面。','Could not read this audio. Choose another file or create a silent chart.','音源を読み込めません。別のファイルを選ぶか、音源なしで作成してください。');
-        error.hidden=false;
+    if(audio) {
+      buffer=await audio.buffer;
+      if(!current()) return;
+      if(!buffer) {
+        clearNewAudio(input);
+        showNewAudioError(error);
         return;
       }
+      const details=await audio.details;
       const request=bpmRequests.get(form);
-      if(request?.file===audio && !form.elements.bpm.dataset.edits) await request.promise;
-      if(form.elements['new-audio'].files[0]!==audio) return;
-      values.bpm=clamp(num(form.elements.bpm.value,values.bpm),1,9999);
-      nextAssets.audio={name:audio.name,blob:audio};
-      values.duration=clamp(round(autoLength?buffer.duration:Math.max(values.duration,buffer.duration)),1,86400);
+      if(request?.audio===audio && form.elements.bpm.dataset.edits===request.revision) await request.promise;
+      nextAssets.audio={name:audio.file.name,blob:audio.file};
+      if(details?.cover) nextAssets.cover=details.cover;
     }
-    if(!dlg.open || $('dialog-form')!==form) return;
+    if(!current() || !form.reportValidity()) return;
+    const values=chartDetails(new FormData(form),model);
+    values.name ||= model.name;
+    if(buffer) {
+      const length=form.elements.duration;
+      values.duration=clamp(round(Math.max(length.dataset.autofilled?0:num(length.value),buffer.duration)),1,86400);
+    }
     if((p.id!==initialDemoId || undo.length || s.curveDraft || !s.saved) && !confirm(t('新建谱面会替换当前工作区。要保留当前项目，请先导出。继续新建？','Creating a chart replaces the current workspace. Export the current project first if you want to keep it. Continue?','譜面を新規作成すると現在のワークスペースが置き換わります。残したいプロジェクトは先に書き出してください。続けますか？'))) return;
     s.mobile='editor';
     s.mode='draw';
@@ -718,16 +729,73 @@ function setBpmStatus(form,message,error=false) {
   status.hidden=!message;
   status.classList.toggle('form-error',error);
 }
-function decodeNewAudio(file) {
-  if(!decodedFiles.has(file)) decodedFiles.set(file,transport.decode(file));
-  return decodedFiles.get(file);
+function clearNewAudio(input) {
+  input.value='';
+  prepareNewAudio(input);
+  input.focus();
+}
+function showNewAudioError(error) {
+  error.textContent=t('无法读取这段音频。请选择其他文件，或移除音频后创建空白谱面。','Could not read this audio. Choose another file or clear it to create a blank chart.','音源を読み込めません。別のファイルを選ぶか、選択を解除して譜面を作成してください。');
+  error.hidden=false;
+}
+function prepareNewAudio(input) {
+  const form=input.form;
+  const fields=form.elements;
+  const file=input.files[0];
+  const status=form.querySelector('#new-chart-audio-status');
+  const error=form.querySelector('#new-chart-error');
+  form.querySelector('#new-chart-audio-selection').hidden=!file;
+  error.hidden=true;
+  status.hidden=true;
+  newAudioRequests.delete(form);
+  bpmRequests.delete(form);
+  form.querySelectorAll('[data-action=estimate]').forEach(control=>control.disabled=false);
+  setBpmStatus(form,'');
+  for(const name of ['name','artist','duration','bpm']) {
+    const field=fields[name];
+    if(!field.dataset.autofilled) continue;
+    field.value=field.defaultValue;
+    delete field.dataset.autofilled;
+  }
+  if(!file) return;
+
+  const request={file};
+  newAudioRequests.set(form,request);
+  const current=()=>dlg.open && $('dialog-form')===form && newAudioRequests.get(form)===request;
+  const fill=(field,value)=>{
+    if(field.dataset.edits || value==='') return;
+    field.value=field.maxLength>0 ? value.slice(0,field.maxLength) : value;
+    field.dataset.autofilled='true';
+  };
+  status.textContent=t('正在读取音频…','Reading audio…','音源を読み込み中…');
+  status.hidden=false;
+  request.buffer=transport.decode(file).catch(()=>null);
+  const metadata=readAudioDetails(file);
+  request.details=(async()=>{
+    const buffer=await request.buffer;
+    if(!current()) return;
+    if(!buffer) {
+      status.hidden=true;
+      showNewAudioError(error);
+      return;
+    }
+    fill(fields.duration,clamp(Math.round(buffer.duration*1000)/1000,1,86400));
+    const details=await metadata;
+    if(!current()) return;
+    fill(fields.name,details.name);
+    fill(fields.artist,details.artist);
+    status.textContent=t('已读取内嵌封面。','Embedded cover loaded.','埋め込みカバーを読み込みました。');
+    status.hidden=!details.cover;
+    return details;
+  })();
+  if(!fields.bpm.dataset.edits) measureFormBpm(form,'tag-or-detect');
 }
 function measureFormBpm(form,mode) {
   const field=form.elements.bpm;
   const input=form.elements['new-audio'];
-  const file=input?.files[0];
+  const audio=newAudioRequests.get(form);
   const revision=field.dataset.edits;
-  const request={file};
+  const request={audio,revision};
   bpmRequests.set(form,request);
   const current=()=>dlg.open && $('dialog-form')===form && bpmRequests.get(form)===request;
   const buttons=form.querySelectorAll('[data-action=estimate]');
@@ -735,18 +803,26 @@ function measureFormBpm(form,mode) {
   setBpmStatus(form,t('正在测算 BPM…','Detecting BPM…','BPM を検出中…'));
   request.promise=(async()=>{
     try {
-      const audio=input ? (file && await decodeNewAudio(file)) : transport.buffer;
+      const buffer=input ? await audio?.buffer : transport.buffer;
       if(!current()) return;
-      if(!audio) return setBpmStatus(form,t('请先选择音频。','Choose audio first.','先に音源を選択してください。'),true);
-      const bpm=await estimateBpm(audio,mode==='high');
+      if(!buffer) {
+        if(audio) setBpmStatus(form,'');
+        else setBpmStatus(form,t('请先选择音频。','Choose audio first.','先に音源を選択してください。'),true);
+        return;
+      }
+      const tagged=mode==='tag-or-detect' ? (await audio.details)?.bpm : null;
+      if(!current()) return;
+      const bpm=tagged ?? await estimateBpm(buffer,mode==='high');
       if(!current()) return;
       if(bpm===null) return setBpmStatus(form,t('未能辨识稳定节拍，请手动填写 BPM。','No stable beat was detected. Enter the BPM manually.','安定した拍を検出できませんでした。BPM を手入力してください。'),true);
       if(field.dataset.edits===revision) {
         field.value=bpm;
-        field.dataset.detected='true';
+        field.dataset.autofilled='true';
         delete field.dataset.edits;
       }
-      setBpmStatus(form,t(`测算结果 · ${bpm} BPM`,`Estimated tempo · ${bpm} BPM`,`推定テンポ · ${bpm} BPM`));
+      setBpmStatus(form,tagged
+        ? t(`音频标签 · ${bpm} BPM`,`Audio tag · ${bpm} BPM`,`音源タグ · ${bpm} BPM`)
+        : t(`测算结果 · ${bpm} BPM`,`Estimated tempo · ${bpm} BPM`,`推定テンポ · ${bpm} BPM`));
     } catch {
       if(current()) setBpmStatus(form,t('无法读取音频以测算 BPM。','Could not read the audio for BPM detection.','BPM の検出に必要な音源を読み込めません。'),true);
     } finally {
@@ -1143,6 +1219,7 @@ const actions={
   mirror:()=>change(chart=>chart.notes.filter(note=>s.selected.has(note.id)).forEach(note=>mirrorNote(note,s.mirrorDirection))),
   delete:()=>{if(s.submode==='node'&&s.selectedNode) actions['node-delete'](s.selectedNode.index);else remove([...s.selected]);},
   estimate:value=>measureFormBpm($('dialog-form'),value),
+  'clear-new-audio':()=>clearNewAudio($('dialog-form').elements['new-audio']),
   'tempo-here':()=>addTempo(snap(transport.time())),
   check:checkDialog,
   'copy-findings':async()=>{await navigator.clipboard.writeText(findings().map(x=>timecode(x.time)+' '+x.label).join('\n'));showToast(t('已复制检查结果','Report copied','レポートをコピーしました'));},
@@ -1203,19 +1280,7 @@ document.addEventListener('change',async event=>{
   }
   else if(el.name==='rate') {s.rate=num(el.value,1);transport.setRate(s.rate);storePreferences();}
   else if(el.name==='vsync') dlg.querySelector('[name=fps]').disabled=el.checked;
-  else if(el.name==='new-audio') {
-    const form=el.form;
-    const bpm=form.elements.bpm;
-    bpmRequests.delete(form);
-    form.querySelectorAll('[data-action=estimate]').forEach(control=>control.disabled=false);
-    setBpmStatus(form,'');
-    $('new-chart-error').hidden=true;
-    if(bpm.dataset.detected) {
-      bpm.value=bpm.defaultValue;
-      delete bpm.dataset.detected;
-    }
-    if(el.files.length && !bpm.dataset.edits) await measureFormBpm(form,'normal');
-  }
+  else if(el.name==='new-audio') prepareNewAudio(el);
   else if(el.name==='switch-chart') {
     p=documents.find(chart=>chart.id===el.value)||p;await resetEditor();dlg.close();queueSave();
   } else if(el.id==='file-input'||el.id==='folder-input') {
@@ -1241,9 +1306,9 @@ document.addEventListener('change',async event=>{
 document.addEventListener('input',event=>{
   const input=event.target;
   if(input.name==='volume' || input.name==='waveformGain') setAudioLevel(input.name,num(input.value,s[input.name]));
-  else if(input.name==='bpm') {
+  else if(input.name==='bpm' || (['name','artist','duration'].includes(input.name) && input.form?.elements['new-audio'])) {
     input.dataset.edits=String(num(input.dataset.edits)+1);
-    delete input.dataset.detected;
+    delete input.dataset.autofilled;
   }
 });
 window.addEventListener('dragover',event=>{if(event.dataTransfer.types.includes('Files'))event.preventDefault();});

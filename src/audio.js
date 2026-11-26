@@ -185,6 +185,25 @@ export async function encodeOgg(buffer) {
   return new Blob(parts,{type:'audio/ogg'});
 }
 
+export async function readAudioDetails(file) {
+  const fallbackTitle=file.name.replace(/\.[^.]+$/,'').trim();
+  try {
+    const {parseBlob,selectCover}=await import('music-metadata');
+    const {common}=await parseBlob(file);
+    const formats={'image/jpeg':'jpg','image/png':'png','image/webp':'webp','image/gif':'gif'};
+    const picture=selectCover(common.picture?.filter(item=>Object.hasOwn(formats,item.format)));
+    const bpm=Number(common.bpm);
+    return {
+      name:common.title?.trim() || fallbackTitle,
+      artist:common.artist?.trim() || '',
+      bpm:bpm>=1 && bpm<=9999 ? bpm : null,
+      cover:picture ? {name:`cover.${formats[picture.format]}`,blob:new Blob([picture.data],{type:picture.format})} : null,
+    };
+  } catch {
+    return {name:fallbackTitle,artist:'',bpm:null,cover:null};
+  }
+}
+
 export async function estimateBpm(buffer, high=false) {
   const hop=Math.max(1,Math.floor(buffer.sampleRate/200));
   const length=Math.floor(Math.min(buffer.length,buffer.sampleRate*150)/hop);
