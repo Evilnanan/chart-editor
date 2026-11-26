@@ -201,6 +201,14 @@ export class Timeline {
       for(const edge of [x,right]) {ctx.fillStyle='#bafa8d75';ctx.fillRect(edge,0,1,height);}
     }
     this.hits=[];
+    const stacks=new Map();
+    const countNote=(row,time)=>{
+      if(row.id!=='air' && row.id!=='road' || time<this.start || time>end) return;
+      const key=`${row.id}:${time}`;
+      const stack=stacks.get(key);
+      if(stack) stack.count++;
+      else stacks.set(key,{row,time,count:1});
+    };
     const notes=this.api.visibleNotes().sort((a,b)=>(a.layer===state.layer)-(b.layer===state.layer));
     for (const note of notes) {
       if (note.end<this.start-.2 || note.time>end+.2) continue;
@@ -208,11 +216,13 @@ export class Timeline {
       const row=matchingAxis || rows.find(row=>row.id===note.track);
       if (!row) continue;
       this.drawNote(note,row);
-      if(note.type==='double') {
+      countNote(row,note.time);
+      if(note.type==='double' && row.id!=='air') {
         const air=rows.find(row=>row.id==='air');
-        if(air) this.drawNote(note,air);
+        if(air) {this.drawNote(note,air);countNote(air,note.time);}
       }
     }
+    for(const {row,time,count} of stacks.values()) if(count>1) this.drawStackCount(row,time,count);
     for (const tempo of state.filterEnabled && (state.hiddenGroups.has('tempo') || state.hiddenTypes.has('preset_beatbpm')) ? [] : project.tempos) {
       const row=rows.find(row=>row.id==='tempo');
       if(!row || tempo.time<this.start-.15 || tempo.time>end+.15) continue;
@@ -318,6 +328,22 @@ export class Timeline {
       pending={x,strength};
     }
     if(pending) draw(pending.x,pending.strength);
+  }
+
+  drawStackCount(row,time,count) {
+    const {ctx,width}=this;
+    const label=`×${count}`;
+    ctx.save();
+    ctx.font='10px monospace';
+    const size=Math.ceil(ctx.measureText(label).width)+8;
+    const x=clamp(this.x(time)-size/2,1,width-size-1);
+    const y=row.y+4;
+    ctx.fillStyle='#352b30';
+    pill(ctx,x,y,size,14,4);ctx.fill();
+    ctx.strokeStyle='#a57957';ctx.stroke();
+    ctx.fillStyle='#ffce9e';
+    ctx.fillText(label,x+4,y+10);
+    ctx.restore();
   }
 
   drawNote(note,row) {

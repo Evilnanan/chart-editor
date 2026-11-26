@@ -311,8 +311,19 @@ function encodeRows(events) {
 
 export function bmsLoss(project) {
   const notes=project.notes;
+  const holdEnds=new Map();
+  const overlappingHolds=[...notes].sort((a,b)=>a.time-b.time).some(note=>{
+    if(!isHold(note.type) || isCurve(note) || note.end<=note.time) return false;
+    const code=findCode(note);
+    const channel=code && channelFor(note,code);
+    if(!longChannels.has(channel)) return false;
+    if(holdEnds.get(channel)>note.time) return true;
+    holdEnds.set(channel,note.end);
+    return false;
+  });
   return [
     ...(notes.some(isCurve)?['曲线长条 / curve holds']:[]),
+    ...(overlappingHolds?['同一 BMS 通道中重叠的长按 / overlapping holds on one BMS channel']:[]),
     ...(notes.some(note=>!findCode(note) && !isCurve(note))?['MDCP 专用对象 / MDCP-only objects']:[]),
     ...(notes.some(note=>note.baseColor||note.gradient||note.hsv||note.stayTexture)?['音符颜色 / note colors']:[]),
     ...(project.layers.length>1?['层级 / layers']:[]),

@@ -13,7 +13,7 @@ const $=id=>document.getElementById(id);
 $('app').innerHTML=shell();
 const dlg=$('dialog');
 const defaults={
-  lang:'zh_cn',division:4,curveDivision:12,snap:true,strict:true,grid:true,waveform:true,indicator:true,follow:true,mirrorDirection:true,
+  lang:'zh_cn',division:4,curveDivision:12,snap:true,allowOverlap:true,grid:true,waveform:true,indicator:true,follow:true,mirrorDirection:true,
   metronome:false,noteClick:false,autosave:true,filterEnabled:true,visibleLayers:false,layerOpacity:.35,otherOpacity:1,rate:1,volume:.8,lastVolume:.8,waveformGain:1,waveformMode:'rhythm',
   defaultAxis:'vfx_changescene',fps:60,vsync:true,clipOffset:0,multi:false,slideFill:false,submode:'object',
 };
@@ -322,6 +322,12 @@ function addTempo(time) {
   if(time<=0) return showToast(t('节拍点须放在正时间','Tempo markers need a positive time','テンポ点は正の時間に置きます'),true);
   tempoDialog({id:uid(),time,bpm:p.bpm,numerator:p.numerator,denominator:p.denominator},true);
 }
+function canDrawNote(note,time=note.time) {
+  return s.allowOverlap || !playable(note) || !p.notes.some(other=>other.layer===note.layer && other.track===note.track && other.time===time);
+}
+function overlapToast() {
+  showToast(t('该位置已有音符。可在「格线与节拍」中开启「绘制时允许同轨叠放」。','This position already has a note. Enable “Allow overlapping notes when drawing” in Grid & BPM.','この位置にはノーツがあります。「グリッドと BPM」で「描画時に同じレーンでの重なりを許可」をオンにできます。'),true);
+}
 function insert(row,time,end=null) {
   if(row==='tempo' || s.noteType==='preset_beatbpm') return addTempo(time);
   const axis=row.startsWith('axis:') && p.axes.find(axis=>axis.id===row.slice(5));
@@ -331,9 +337,6 @@ function insert(row,time,end=null) {
   const layerForAxis=isGlobalAxis(type)?-1:s.layer;
   const link=axis || (isAxis(type) ? p.axes.find(item=>item.type===type && item.layer===layerForAxis) : null);
   const lane=['air','road'].includes(row)?row:trackFor(type);
-  if(s.snap&&s.strict && playable({track:trackFor(type,lane)}) && p.notes.some(note=>note.layer===s.layer&&note.time===time&&note.track===trackFor(type,lane))) {
-    return showToast(t('该格线位置已有音符','This grid slot already has a note','この位置にはノーツがあります'),true);
-  }
   if(link && p.notes.some(note=>note.axisId===link.id&&note.time===time)) return showToast(t('该位置已有关键帧','A keyframe already exists here','この位置にはキーフレームがあります'),true);
   const note=makeNote(type,end!==null?Math.min(time,end):time,lane,link?.layer??(isAxis(type)?layerForAxis:s.layer),{
     direction:directions(type).includes(s.placementDirection)?s.placementDirection:directions(type)[0],speed:s.placementSpeed,
@@ -343,10 +346,12 @@ function insert(row,time,end=null) {
   if(link) note.axisId=link.id;
   if(s.slideFill && playable(note)&&!isHold(type) && end!==null && end!==time) {
     const points=gridPoints(p,Math.min(time,end),Math.max(time,end),s.division).slice(0,1000);
-    const notes=points.filter(point=>!p.notes.some(other=>other.layer===s.layer && other.track===note.track && other.time===point.time))
+    const notes=points.filter(point=>canDrawNote(note,point.time))
       .map(({time})=>({...note,id:uid(),time,end:time}));
+    if(!notes.length) return;
     s.selected=new Set(notes.map(item=>item.id));change(chart=>chart.notes.push(...notes));return;
   }
+  if(!canDrawNote(note)) return overlapToast();
   s.selected=new Set([note.id]);
   change(chart=>{
     if(isAxis(type) && !link) {
@@ -378,7 +383,9 @@ function curvePoint(time,position,hit,extend,insertPoint) {
     s.curveDraft=clone(existing);s.curveDraft.replace=true;
   }
   if(!s.curveDraft) {
-    s.curveDraft=makeNote(s.noteType,time,'road',s.layer,{nodes:[{time,position,curve:s.curveType}]});
+    const note=makeNote(s.noteType,time,'road',s.layer,{nodes:[{time,position,curve:s.curveType}]});
+    if(!canDrawNote(note)) return overlapToast();
+    s.curveDraft=note;
   } else {
     if(time<=s.curveDraft.nodes.at(-1).time) return showToast(t('下一个节点须在前一个节点之后','The next node must be later','次のノードは後ろに置きます'),true);
     s.curveDraft.nodes.push({time,position,curve:s.curveType});
@@ -842,13 +849,13 @@ function gridDialog() {
       ${field(t('格线偏移（秒）','Grid offset (s)','グリッドオフセット（秒）'),input('offset',p.offset,'number','step="any"'))}
       ${field(t('曲线水平细分','Curve position subdivisions','カーブ位置の分割'),input('curveDivision',s.curveDivision,'number','min="1" max="256"'))}
       ${checkbox('grid',t('显示格线','Show grid','グリッドを表示'),s.grid)}
-      ${checkbox('strict',t('严格吸附','Strict snap','厳密な吸着'),s.strict)}
+      ${checkbox('allowOverlap',t('绘制时允许同轨叠放','Allow overlapping notes when drawing','描画時に同じレーンでの重なりを許可'),s.allowOverlap)}
     </div>
     ${bpmControls(true)}
     ${button('tempo-here',t('在播放头处添加节拍点','Add tempo marker at playhead','再生ヘッドにテンポ点を追加'),'plus','bordered')}`,
     t('应用','Apply','適用'),data=>{
       for(const key of ['division','curveDivision']) s[key]=num(data.get(key),s[key]);
-      for(const key of ['grid','strict']) s[key]=data.has(key);
+      for(const key of ['grid','allowOverlap']) s[key]=data.has(key);
       const values=Object.fromEntries(['bpm','numerator','denominator','offset'].map(key=>[key,num(data.get(key),p[key])]));
       change(chart=>Object.assign(chart,values,{mdcpDivision:s.division,mdcpGrid:s.grid}));
       if(transport.time()>p.duration) seek(p.duration,true);

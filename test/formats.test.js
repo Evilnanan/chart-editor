@@ -109,6 +109,26 @@ test('BMS time remains stable around newly authored tempo markers and short meas
   }
 });
 
+test('MDCP and BMS keep simultaneous taps as separate notes on both lanes',()=>{
+  const chart=testsChart();
+  chart.notes=[makeNote('small_1',1,'road'),makeNote('mid_1',1,'road'),makeNote('small_1',1,'air')];
+  const key=note=>`${note.time}:${note.track}:${note.type}`;
+  const expected=chart.notes.map(key).sort();
+  assert.deepEqual(parseMdcpmf(serializeMdcpmf(chart)).notes.map(key).sort(),expected);
+  assert.deepEqual(parseBms(serializeBms(chart)).notes.map(key).sort(),expected);
+});
+
+test('BMS-based exports warn about overlapping holds sharing an endpoint channel',()=>{
+  const chart=testsChart();
+  chart.notes=[makeNote('long',1,'road',0,{end:3}),makeNote('long',2,'road',0,{end:4})];
+  for(const format of ['bms','mdm','epk']) {
+    assert.ok(formatLoss(format,chart,[chart]).some(message=>message.includes('overlapping holds')));
+  }
+  assert.deepEqual(formatLoss('mdcpmf',chart,[chart]),[]);
+  chart.notes[1].time=3;
+  assert.deepEqual(formatLoss('bms',chart,[chart]),[]);
+});
+
 test('MDM and Euterpe handle two difficulties with shared audio and per-map ratings',async()=>{
   const master=testsChart();
   master.notes=[makeNote('small_1',2,'air')];
