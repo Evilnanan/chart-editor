@@ -50,8 +50,16 @@ export class Timeline {
       this.setStart((event.clientX-bounds.left)/bounds.width*this.api.project().duration-this.width/this.scale/2);
       this.draw();
     };
-    this.scrub.addEventListener('pointerdown',event=>{this.scrub.setPointerCapture(event.pointerId);seekScroll(event);});
-    this.scrub.addEventListener('pointermove',event=>{if(this.scrub.hasPointerCapture(event.pointerId)) seekScroll(event);});
+    this.scrub.addEventListener('pointerdown',event=>{
+      if(!event.isPrimary || event.button!==0) return;
+      event.preventDefault();
+      this.scrub.focus({preventScroll:true});
+      this.scrub.setPointerCapture(event.pointerId);
+      seekScroll(event);
+    });
+    this.scrub.addEventListener('pointermove',event=>{
+      if(event.isPrimary && this.scrub.hasPointerCapture(event.pointerId)) seekScroll(event);
+    });
     this.scrub.addEventListener('keydown',event=>{
       if (!['ArrowLeft','ArrowRight','Home','End'].includes(event.key)) return;
       event.preventDefault();
