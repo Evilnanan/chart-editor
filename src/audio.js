@@ -1,6 +1,8 @@
 export class Transport {
-  constructor(onEnd) {
+  constructor(onEnd,onWaveform=()=>{}) {
     this.onEnd=onEnd;
+    this.onWaveform=onWaveform;
+    this.onsets=[];
     this.rate=1;
     this.position=0;
     this.volume=.8;
@@ -41,10 +43,21 @@ export class Transport {
 
   setBuffer(buffer,duration) {
     this.pause();
+    this.onsetTask?.abort();
     this.buffer=buffer;
     this.duration=duration;
     this.position=0;
     this.peaks=buffer ? waveform(buffer) : null;
+    this.onsets=[];
+    this.onsetTask=buffer ? new AbortController() : null;
+    if(buffer) this.updateOnsets(buffer,this.onsetTask.signal);
+  }
+
+  async updateOnsets(buffer,signal) {
+    const onsets=await findAudioOnsets(buffer,signal);
+    if(signal.aborted) return;
+    this.onsets=onsets;
+    this.onWaveform();
   }
 
   time() {
@@ -145,6 +158,99 @@ function waveform(buffer) {
     peaks[i]=peak;
   }
   return peaks;
+}
+
+const onsetSize=512;
+const onsetBands=[120,260,560,1200,2400,4400];
+const onsetWindow=Float32Array.from({length:onsetSize},(_,i)=>.5-.5*Math.cos(2*Math.PI*i/(onsetSize-1)));
+const onsetCos=Float32Array.from({length:onsetSize/2},(_,i)=>Math.cos(2*Math.PI*i/onsetSize));
+const onsetSin=Float32Array.from({length:onsetSize/2},(_,i)=>-Math.sin(2*Math.PI*i/onsetSize));
+const onsetOrder=Uint16Array.from({length:onsetSize},(_,index)=>{
+  let reversed=0;
+  for(let bit=1;bit<onsetSize;bit*=2) {
+    reversed=(reversed<<1)|(index&1);
+    index>>=1;
+  }
+  return reversed;
+});
+
+function onsetFft(real,imaginary) {
+  for(let span=2;span<=onsetSize;span*=2) {
+    const half=span/2;
+    const step=onsetSize/span;
+    for(let start=0;start<onsetSize;start+=span) for(let j=0;j<half;j++) {
+      const left=start+j, right=left+half;
+      const cos=onsetCos[j*step], sin=onsetSin[j*step];
+      const re=cos*real[right]-sin*imaginary[right];
+      const im=sin*real[right]+cos*imaginary[right];
+      real[right]=real[left]-re;
+      imaginary[right]=imaginary[left]-im;
+      real[left]+=re;
+      imaginary[left]+=im;
+    }
+  }
+}
+
+export async function findAudioOnsets(buffer,signal) {
+  const stride=Math.max(1,Math.round(buffer.sampleRate/12000));
+  const rate=buffer.sampleRate/stride;
+  const hop=Math.max(1,Math.round(rate/200));
+  const frames=Math.max(0,Math.floor((buffer.length/stride-onsetSize/2)/hop)+1);
+  const channels=Array.from({length:Math.min(2,buffer.numberOfChannels)},(_,index)=>buffer.getChannelData(index));
+  const bands=Uint8Array.from({length:onsetSize/2},(_,i)=>onsetBands.filter(edge=>i*rate/onsetSize>=edge).length);
+  const bandCount=onsetBands.length+1;
+  const bandPower=new Float32Array(bandCount);
+  const history=Array.from({length:3},()=>new Float32Array(bandCount));
+  const real=new Float32Array(onsetSize), imaginary=new Float32Array(onsetSize);
+  const flux=new Float32Array(frames);
+  const sum=new Float64Array(frames+1);
+
+  for(let frame=0;frame<frames;frame++) {
+    if(frame%200===0) {
+      await new Promise(resolve=>setTimeout(resolve,0));
+      if(signal?.aborted) return [];
+    }
+    const sampleStart=(frame*hop-onsetSize/2)*stride;
+    bandPower.fill(0);
+    for(const samples of channels) {
+      imaginary.fill(0);
+      for(let i=0;i<onsetSize;i++) {
+        const start=sampleStart+i*stride;
+        let value=0;
+        for(let j=0;j<stride;j++) value+=samples[start+j] || 0;
+        real[onsetOrder[i]]=onsetWindow[i]*value/stride;
+      }
+      onsetFft(real,imaginary);
+      for(let i=1;i<bands.length;i++) bandPower[bands[i]]+=real[i]**2+imaginary[i]**2;
+    }
+    // A new spectral band can reveal an attack in audio with nearly constant amplitude.
+    const previous=history[frame%history.length];
+    let rise=0;
+    for(let band=0;band<bandCount;band++) {
+      const level=Math.log1p(.6*Math.sqrt(bandPower[band]/channels.length));
+      rise+=Math.max(0,level-previous[band]);
+      previous[band]=level;
+    }
+    const score=rise/bandCount;
+    flux[frame]=score;
+    sum[frame+1]=sum[frame]+Math.min(score,.25);
+  }
+
+  const peaks=[];
+  for(let frame=0;frame<frames;frame++) {
+    const score=flux[frame];
+    if(score<.06 || score<(flux[frame-1] ?? 0) || score<=(flux[frame+1] ?? 0)) continue;
+    const from=Math.max(0,frame-36), to=Math.min(frames,frame+37);
+    const local=(sum[to]-sum[from])/(to-from);
+    if(score<local*3+.035) continue;
+    const last=peaks.at(-1);
+    if(last && frame-last.frame<10) {
+      if(score<=last.score) continue;
+      peaks.pop();
+    }
+    peaks.push({frame,score,local});
+  }
+  return peaks.map(({frame,score,local})=>({time:frame*hop/rate,strength:Math.min(1,.3+score-local)}));
 }
 
 export function makeDemoAudio(context, duration=90, bpm=128) {

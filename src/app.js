@@ -14,7 +14,7 @@ $('app').innerHTML=shell();
 const dlg=$('dialog');
 const defaults={
   lang:'zh_cn',division:4,curveDivision:12,snap:true,strict:true,grid:true,waveform:true,indicator:true,follow:true,mirrorDirection:true,
-  metronome:false,noteClick:false,autosave:true,filterEnabled:true,visibleLayers:false,layerOpacity:.35,otherOpacity:1,rate:1,volume:.8,lastVolume:.8,waveformGain:1,
+  metronome:false,noteClick:false,autosave:true,filterEnabled:true,visibleLayers:false,layerOpacity:.35,otherOpacity:1,rate:1,volume:.8,lastVolume:.8,waveformGain:1,waveformMode:'rhythm',
   defaultAxis:'vfx_changescene',fps:60,vsync:true,clipOffset:0,multi:false,slideFill:false,submode:'object',
 };
 const settingsKey='muse-studio-settings-v1';
@@ -48,12 +48,12 @@ let formHandler;
 let filterList='';
 const newAudioRequests=new WeakMap();
 const bpmRequests=new WeakMap();
-const transport=new Transport(()=>updatePlayControls());
+const transport=new Transport(()=>updatePlayControls(),()=>timeline.draw());
 const preview=new Playtest($('preview'),transport,()=>p,t,icon,()=>{updatePlayControls();timeline.draw();});
 const timeline=new Timeline($('canvas-wrap'),$('lane-labels'),$('scrub'),{
   state:s,t,project:()=>p,visibleNotes,selectable,select:selectOne,selectMany,selectedOriginals:()=>clone(selectedItems()),
   snapshot:()=>clone(p),restore,finishDrag,dragSelection,remove,insert,curvePoint,finishCurve,seek,snap,updateZoom,
-  currentTime:()=>transport.time(),peaks:()=>transport.peaks,audioDuration:()=>transport.buffer?.duration || p.duration,
+  currentTime:()=>transport.time(),peaks:()=>transport.peaks,onsets:()=>transport.onsets,audioDuration:()=>transport.buffer?.duration || p.duration,
 });
 applyPreferences();
 render();
@@ -79,6 +79,7 @@ function applyPreferences() {
   s.volume=clamp(num(s.volume,.8),0,1);
   s.lastVolume=s.volume || clamp(num(s.lastVolume,.8),.01,1);
   s.waveformGain=clamp(num(s.waveformGain,1),.25,4);
+  if(s.waveformMode!=='amplitude') s.waveformMode='rhythm';
   transport.setRate(s.rate);
   transport.setVolume(s.volume);
 }
@@ -1279,6 +1280,12 @@ document.addEventListener('change',async event=>{
     p.mdcpDivision=s.division;timeline.draw();queueSave();
   }
   else if(el.name==='rate') {s.rate=num(el.value,1);transport.setRate(s.rate);storePreferences();}
+  else if(el.name==='waveformMode') {
+    s.waveformMode=el.value;
+    for(const control of document.querySelectorAll('[name=waveformMode]')) control.value=s.waveformMode;
+    timeline.draw();
+    storePreferences();
+  }
   else if(el.name==='vsync') dlg.querySelector('[name=fps]').disabled=el.checked;
   else if(el.name==='new-audio') prepareNewAudio(el);
   else if(el.name==='switch-chart') {

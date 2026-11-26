@@ -261,8 +261,10 @@ export class Timeline {
     if(!peaks) return;
     const duration=this.api.audioDuration();
     const gain=this.api.state.waveformGain;
+    const rhythm=this.api.state.waveformMode==='rhythm';
     const gradient=ctx.createLinearGradient(0,row.y,0,row.y+row.height);
-    gradient.addColorStop(0,'#9390c6');gradient.addColorStop(.5,'#525077');gradient.addColorStop(1,'#9390c6');
+    const edge=rhythm?'#8276ad':'#a49acc';
+    gradient.addColorStop(0,edge);gradient.addColorStop(.5,'#555077');gradient.addColorStop(1,edge);
     ctx.fillStyle=gradient;
     for(let x=0;x<width;x+=2) {
       const time=this.time(x);
@@ -271,9 +273,43 @@ export class Timeline {
       const last=Math.floor(this.time(x+2)/duration*peaks.length);
       let value=0;
       for(let i=first;i<=last;i++) value=Math.max(value,peaks[i] || 0);
-      const h=Math.max(1,Math.min(row.height*.46,value*row.height*1.38*gain));
+      const level=value*gain;
+      const h=row.height*.46*level/(level+.55);
       ctx.fillRect(x,mid-h,1.25,h*2);
     }
+    if(rhythm) this.drawOnsets(row);
+  }
+
+  drawOnsets(row) {
+    const hits=this.api.onsets();
+    const {ctx,width}=this;
+    const mid=row.y+row.height/2;
+    const draw=(x,strength)=>{
+      const top=mid-row.height*(.19+.22*strength);
+      ctx.fillStyle='#efba7fad';
+      ctx.fillRect(x-.65,top,1.3,mid+row.height*.24-top);
+      ctx.fillStyle='#ffcc91';
+      ctx.beginPath();ctx.moveTo(x-2.5,top);ctx.lineTo(x+2.5,top);ctx.lineTo(x,top+4);ctx.fill();
+    };
+    let left=0, right=hits.length;
+    while(left<right) {
+      const middle=Math.floor((left+right)/2);
+      if(hits[middle].time<this.start) left=middle+1;
+      else right=middle;
+    }
+    let pending;
+    for(let i=left;i<hits.length;i++) {
+      const {time,strength}=hits[i];
+      const x=this.x(time);
+      if(x>width) break;
+      if(pending && x-pending.x<6) {
+        if(strength>pending.strength) pending={x,strength};
+        continue;
+      }
+      if(pending) draw(pending.x,pending.strength);
+      pending={x,strength};
+    }
+    if(pending) draw(pending.x,pending.strength);
   }
 
   drawNote(note,row) {

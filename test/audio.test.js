@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { Transport, estimateBpm, makeDemoAudio, readAudioDetails } from '../src/audio.js';
+import { Transport, estimateBpm, findAudioOnsets, makeDemoAudio, readAudioDetails } from '../src/audio.js';
 
 const context={
   createBuffer(numberOfChannels,length,sampleRate) {
@@ -35,6 +35,34 @@ test('rejects silence, steady tones, and insufficient audio for BPM',async()=>{
   for(let i=0;i<tone.length;i++) tone[i]=.5*Math.sin(2*Math.PI*i*440/samples.sampleRate);
   assert.equal(await estimateBpm(samples),null);
   assert.equal(await estimateBpm(makeDemoAudio(context,1,128)),null);
+});
+
+test('locates unevenly spaced attacks in a clipped waveform with almost uniform peaks',async()=>{
+  const rate=44100;
+  const beatTimes=[.333,.75,1.13,1.63,1.73,2.45,4.24,5.35];
+  const track=context.createBuffer(2,rate*6,rate);
+  const samples=track.getChannelData(1);
+  for(let i=0;i<samples.length;i++) {
+    const time=i/rate;
+    const elapsed=time-(beatTimes.findLast(beat=>beat<=time) ?? -1);
+    const kick=elapsed<.105 ? Math.sin(2*Math.PI*(55*elapsed+3*(1-Math.exp(-elapsed*35))))*.95*Math.exp(-elapsed*21) : 0;
+    const click=elapsed<.009 ? Math.sin(2*Math.PI*3126*elapsed)*.55*Math.exp(-elapsed*340) : 0;
+    const mix=1.25*Math.sin(2*Math.PI*370*time)+kick+click;
+    samples[i]=Math.max(-.72,Math.min(.72,mix));
+  }
+  const markers=(await findAudioOnsets(track)).filter(({time})=>time>=.1);
+  assert.equal(markers.length,beatTimes.length);
+  for(const [index,beat] of beatTimes.entries()) assert.ok(Math.abs(markers[index].time-beat)<.02);
+});
+
+test('does not mark repeated bass cycles in a sustained tone',async()=>{
+  const rate=22050;
+  const buffer=context.createBuffer(1,rate*3,rate);
+  assert.deepEqual(await findAudioOnsets(buffer),[]);
+  const samples=buffer.getChannelData(0);
+  for(let i=0;i<samples.length;i++) samples[i]=Math.max(-.72,Math.min(.72,1.25*Math.sin(2*Math.PI*55*i/rate)));
+  const markers=await findAudioOnsets(buffer);
+  assert.ok(markers.every(({time})=>time<.05));
 });
 
 test('extracts song details and cover from ID3 metadata',async()=>{

@@ -158,13 +158,18 @@ export const muteLabel=(t,s)=>s.volume?t('静音','Mute','ミュート'):t('取�
 const muteButton=(t,s)=>iconButton('mute',muteLabel(t,s),'volume','subtle volume-icon'+active(!s.volume));
 
 export function renderAudioLevels(t,s) {
-  return [
+  const mode=field(t('波形显示','Waveform view','波形表示'),select('waveformMode',[
+    ['rhythm',t('节奏增强 · 金色起音','Rhythm · Gold onset markers','リズム強調 · 金色のアタック')],
+    ['amplitude',t('原始振幅','Amplitude','振幅')],
+  ],s.waveformMode,'class="waveform-mode"'));
+  const levels=[
     ['volume',t('播放音量','Playback volume','再生音量'),0,1,.01],
     ['waveformGain',t('波形增益','Waveform gain','波形ゲイン'),.25,4,.05],
   ].map(([name,label,min,max,step])=>`<label class="field audio-level"><span>${html(label)}
     <output class="mono" data-level-value="${name}">${Math.round(s[name]*100)}%</output></span>
     ${input(name,s[name],'range',`min="${min}" max="${max}" step="${step}" aria-label="${html(label)}" aria-valuetext="${Math.round(s[name]*100)}%"`)}
   </label>`).join('');
+  return mode+levels;
 }
 
 export function renderPalette(t,s) {

@@ -26,8 +26,9 @@ dialog{color:var(--text);background:#202029;border:1px solid #393948;width:min(5
 .wave-control{width:100%;height:100%;border-radius:0;color:inherit;font-size:inherit;letter-spacing:inherit;justify-content:flex-start;padding-inline:9px}
 .wave-control[aria-expanded=true]{color:var(--text);background:var(--raised)}
 .wave-control:focus-visible{outline-offset:-2px}
-.audio-levels:not([hidden]){display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;padding:9px 12px;border-top:1px solid var(--line)}
+.audio-levels:not([hidden]){display:grid;grid-template-columns:minmax(0,1.2fr) repeat(2,minmax(0,1fr));gap:12px;padding:9px 12px;border-top:1px solid var(--line)}
 .audio-level>span{display:flex;align-items:center;justify-content:space-between;gap:5px}
 .audio-level input[type=range]{min-width:0;width:100%}
+.waveform-mode{width:100%;text-overflow:ellipsis}
 .bpm-actions{display:flex;flex-wrap:wrap;gap:8px}
-@media(max-width:680px){.wave-control{justify-content:center;flex-direction:column;gap:0;padding:0}.audio-levels:not([hidden]){gap:8px;padding-inline:8px}.audio-level>span{font-size:12px}}
+@media(max-width:680px){.wave-control{justify-content:center;flex-direction:column;gap:0;padding:0}.audio-levels:not([hidden]){grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;padding-inline:8px}.audio-levels .field:first-child{grid-column:1/-1}.audio-level>span{font-size:12px}}
